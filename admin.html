@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Trang Quản Trị Tool Cho Thuê</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+        // --- Khởi tạo Firebase ---
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, doc, getDocs, setDoc, updateDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Cấu hình Firebase MỚI (Project: toolchothue)
+        const CONFIG = {
+            firebase: {
+                apiKey: "AIzaSyDJu0KsERvaIsumIupZApM3i7S9bl_ihdo",
+                authDomain: "toolchothue.firebaseapp.com",
+                databaseURL: "https://toolchothue-default-rtdb.firebaseio.com",
+                projectId: "toolchothue",
+                storageBucket: "toolchothue.firebasestorage.app",
+                messagingSenderId: "500092338170",
+                appId: "1:500092338170:web:2ca1966c92f63321c5ee43",
+                measurementId: "G-8JP0Q2R0NJ"
+            },
+            // Hậu tố email giả lập cho user chỉ nhập username (ví dụ: admin -> admin@toolchothue.web.app)
+            authDomainSuffix: "@toolchothue.web.app", 
+            energy: {
+                initial: 5
+            }
+        };
+
+        // Khởi tạo ứng dụng và các dịch vụ
+        const firebaseApp = initializeApp(CONFIG.firebase);
+        const auth = getAuth(firebaseApp);
+        const db = getFirestore(firebaseApp);
+
+        // Truy xuất một số phần tử giao diện để điều khiển sau này
+        const loginSection = document.getElementById('login-section');
+        const adminSection = document.getElementById('admin-section');
+        const userTableBody = document.getElementById('user-table-body');
+        const loginForm = document.getElementById('login-form');
+        const logoutBtn = document.getElementById('logout-btn');
+        const createUserForm = document.getElementById('create-user-form');
+        const refreshUsersBtn = document.getElementById('refresh-users-btn');
+
+        // Phần tử tìm kiếm người dùng
+        const searchInput = document.getElementById('search-user-input');
+        const searchBtn = document.getElementById('search-user-btn');
+        const clearSearchBtn = document.getElementById('clear-search-btn');
+
+        /**
+         * Hiển thị thông báo đơn giản cho người dùng.
+         */
+        function showToast(message, type = 'info') {
+            const colors = {
+                success: 'bg-green-500',
+                error: 'bg-red-500',
+                info: 'bg-blue-500'
+            };
+            const toast = document.createElement('div');
+            toast.textContent = message;
+            toast.className = `${colors[type]} text-white px-4 py-2 rounded shadow fixed top-4 right-4 z-50`;
+            document.body.appendChild(toast);
+            setTimeout(() => {
+                toast.remove();
+            }, 4000);
+        }
+
+        /**
+         * Tải danh sách người dùng từ Firestore.
+         */
+        async function loadUsers(filterUsername) {
+            userTableBody.innerHTML = '';
+            try {
+                const querySnapshot = await getDocs(collection(db, 'users'));
+                const filter = filterUsername ? filterUsername.toLowerCase() : null;
+                querySnapshot.forEach((docSnap) => {
+                    const data = docSnap.data();
+                    // Lọc theo tên nếu có filter
+                    if (filter && !(data.username || '').toLowerCase().includes(filter)) return;
+                    const tr = document.createElement('tr');
+                    tr.className = 'border-b border-gray-700';
+                    
+                    // Cột UID
+                    const uidTd = document.createElement('td');
+                    uidTd.textContent = docSnap.id;
+                    uidTd.className = 'px-2 py-1 text-xs break-all';
+                    
+                    // Cột tên người dùng
+                    const nameTd = document.createElement('td');
+                    nameTd.textContent = data.username || '';
+                    nameTd.className = 'px-2 py-1';
+                    
+                    // Cột số điện thoại
+                    const phoneTd = document.createElement('td');
+                    phoneTd.textContent = data.phoneNumber || '';
+                    phoneTd.className = 'px-2 py-1';
+                    
+                    // Cột năng lượng hiện có
+                    const energyTd = document.createElement('td');
+                    energyTd.textContent = data.energy ?? 0;
+                    energyTd.className = 'px-2 py-1';
+
+                    // Cột cấp bậc (THƯỜNG / VIP / V-VIP / PREMIUM / OMEGA)
+                    const levelTd = document.createElement('td');
+                    const levelSelect = document.createElement('select');
+                    levelSelect.className = 'w-28 bg-gray-800 text-white border border-gray-600 rounded px-1';
+                    const levels = [
+                        { value: 'normal', label: 'THƯỜNG' },
+                        { value: 'vip', label: 'VIP' },
+                        { value: 'v-vip', label: 'V-VIP' },
+                        { value: 'premium', label: 'PREMIUM' },
+                        { value: 'omega', label: 'OMEGA' }
+                    ];
+                    levels.forEach(({ value, label }) => {
+                        const opt = document.createElement('option');
+                        opt.value = value;
+                        opt.textContent = label;
+                        levelSelect.appendChild(opt);
+                    });
+                    
+                    levelSelect.value = data.level || 'normal';
+                    
+                    const getLevelColor = (level) => {
+                        switch (level) {
+                            case 'vip': return '#FFD700';
+                            case 'v-vip': return '#FF4500';
+                            case 'premium': return '#ff00ff';
+                            case 'omega': return '#00FF00';
+                            default: return '#00ffff';
+                        }
+                    };
+                    
+                    // Style ban đầu
+                    {
+                        const initColor = getLevelColor(levelSelect.value);
+                        levelSelect.style.color = initColor;
+                        levelSelect.style.borderColor = initColor;
+                        levelSelect.style.boxShadow = `0 0 6px ${initColor}`;
+                        levelSelect.style.fontWeight = '700';
+                    }
+
+                    // Sự kiện thay đổi cấp bậc
+                    levelSelect.onchange = async () => {
+                        const newLevel = levelSelect.value;
+                        const newColor = getLevelColor(newLevel);
+                        levelSelect.style.color = newColor;
+                        levelSelect.style.borderColor = newColor;
+                        levelSelect.style.boxShadow = `0 0 6px ${newColor}`;
+                        try {
+                            await updateDoc(doc(db, 'users', docSnap.id), { level: newLevel });
+                            showToast(`Đã cập nhật cấp bậc cho ${data.username} thành ${newLevel.toUpperCase()}.`, 'success');
+                            data.level = newLevel;
+                        } catch (err) {
+                            console.error(err);
+                            showToast('Không thể cập nhật cấp bậc.', 'error');
+                        }
+                    };
+                    levelTd.appendChild(levelSelect);
+                    levelTd.className = 'px-2 py-1';
+
+                    // Cột nhập số năng lượng
+                    const inputTd = document.createElement('td');
+                    const energyInput = document.createElement('input');
+                    energyInput.type = 'number';
+                    energyInput.min = '0';
+                    energyInput.className = 'w-20 bg-gray-800 text-white border border-gray-600 rounded px-1';
+                    inputTd.appendChild(energyInput);
+
+                    // Cột hành động
+                    const actionTd = document.createElement('td');
+                    const actionWrapper = document.createElement('div');
+                    actionWrapper.className = 'flex space-x-2';
+
+                    // Nút nạp
+                    const addButton = document.createElement('button');
+                    addButton.textContent = 'Nạp';
+                    addButton.className = 'bg-cyan-600 hover:bg-cyan-700 text-white px-3 py-1 rounded';
+                    addButton.onclick = async () => {
+                        const value = parseInt(energyInput.value);
+                        if (isNaN(value) || value <= 0) {
+                            showToast('Vui lòng nhập số hợp lệ.', 'error');
+                            return;
+                        }
+                        try {
+                            await updateDoc(doc(db, 'users', docSnap.id), {
+                                energy: (data.energy ?? 0) + value
+                            });
+                            showToast(`Đã nạp ${value} năng lượng cho ${data.username}.`, 'success');
+                            data.energy = (data.energy ?? 0) + value;
+                            energyTd.textContent = data.energy;
+                            energyInput.value = '';
+                        } catch (err) {
+                            console.error(err);
+                            showToast('Lỗi khi nạp năng lượng.', 'error');
+                        }
+                    };
+                    actionWrapper.appendChild(addButton);
+
+                    // Nút trừ
+                    const subtractButton = document.createElement('button');
+                    subtractButton.textContent = 'Trừ';
+                    subtractButton.className = 'bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded';
+                    subtractButton.onclick = async () => {
+                        const value = parseInt(energyInput.value);
+                        if (isNaN(value) || value <= 0) {
+                            showToast('Vui lòng nhập số hợp lệ.', 'error');
+                            return;
+                        }
+                        const currentEnergy = data.energy ?? 0;
+                        if (currentEnergy - value < 0) {
+                            showToast('Không đủ năng lượng để trừ.', 'error');
+                            return;
+                        }
+                        try {
+                            await updateDoc(doc(db, 'users', docSnap.id), {
+                                energy: currentEnergy - value
+                            });
+                            showToast(`Đã trừ ${value} năng lượng của ${data.username}.`, 'success');
+                            data.energy = currentEnergy - value;
+                            energyTd.textContent = data.energy;
+                            energyInput.value = '';
+                        } catch (err) {
+                            console.error(err);
+                            showToast('Lỗi khi trừ năng lượng.', 'error');
+                        }
+                    };
+                    actionWrapper.appendChild(subtractButton);
+                    
+                    actionTd.appendChild(actionWrapper);
+                    actionTd.className = 'px-2 py-1';
+
+                    tr.appendChild(uidTd);
+                    tr.appendChild(nameTd);
+                    tr.appendChild(phoneTd);
+                    tr.appendChild(energyTd);
+                    tr.appendChild(levelTd);
+                    tr.appendChild(inputTd);
+                    tr.appendChild(actionTd);
+                    userTableBody.appendChild(tr);
+                });
+                if (filter && !userTableBody.firstChild) {
+                    showToast('Không tìm thấy người dùng phù hợp.', 'info');
+                }
+            } catch (error) {
+                console.error(error);
+                showToast('Lỗi tải danh sách người dùng (Kiểm tra Firestore Rules).', 'error');
+            }
+        }
+
+        // Xử lý sự kiện đăng nhập
+        loginForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const usernameInput = document.getElementById('admin-username');
+            const passwordInput = document.getElementById('admin-password');
+            let identifier = usernameInput.value.trim();
+            const password = passwordInput.value;
+            if (!identifier || !password) {
+                showToast('Vui lòng nhập đầy đủ thông tin.', 'error');
+                return;
+            }
+            // Tự động thêm hậu tố nếu không có @
+            if (!identifier.includes('@')) {
+                identifier = `${identifier.toLowerCase()}${CONFIG.authDomainSuffix}`;
+            }
+            try {
+                await signInWithEmailAndPassword(auth, identifier, password);
+                showToast('Đăng nhập thành công.', 'success');
+            } catch (err) {
+                console.error(err);
+                if (err.code === 'auth/user-not-found') {
+                    // Tự động tạo admin nếu chưa có
+                    try {
+                        const userCredential = await createUserWithEmailAndPassword(auth, identifier, password);
+                        const newUsername = identifier.split('@')[0];
+                        await setDoc(doc(db, 'users', userCredential.user.uid), {
+                            uid: userCredential.user.uid,
+                            username: newUsername,
+                            phoneNumber: '',
+                            energy: CONFIG.energy.initial,
+                            level: 'normal',
+                            createdAt: serverTimestamp(),
+                            avatarUrl: '',
+                            f168Username: '',
+                            f168UsernameLastChanged: null,
+                            f168UsernameChangeCount: 0
+                        });
+                        showToast('Tài khoản mới đã được tạo.', 'success');
+                    } catch (createErr) {
+                        console.error(createErr);
+                        showToast('Lỗi tạo tài khoản mới.', 'error');
+                    }
+                } else {
+                    showToast('Đăng nhập thất bại: ' + err.code, 'error');
+                }
+            }
+        });
+
+        // Xử lý sự kiện đăng xuất
+        logoutBtn.addEventListener('click', async () => {
+            try {
+                await signOut(auth);
+                showToast('Đã đăng xuất.', 'info');
+            } catch (err) {
+                console.error(err);
+            }
+        });
+
+        // Xử lý tạo tài khoản người dùng mới
+        createUserForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const newUsername = document.getElementById('new-username').value.trim().toLowerCase();
+            const newPhone = document.getElementById('new-phone').value.trim();
+            const newPassword = document.getElementById('new-password').value;
+            const newEnergy = parseInt(document.getElementById('new-energy').value);
+
+            if (!newUsername || !newPhone || !newPassword) {
+                showToast('Thiếu thông tin.', 'error');
+                return;
+            }
+
+            try {
+                const email = `${newUsername}${CONFIG.authDomainSuffix}`;
+                const userCredential = await createUserWithEmailAndPassword(auth, email, newPassword);
+                await setDoc(doc(db, 'users', userCredential.user.uid), {
+                    uid: userCredential.user.uid,
+                    username: newUsername,
+                    phoneNumber: newPhone,
+                    energy: isNaN(newEnergy) ? CONFIG.energy.initial : newEnergy,
+                    level: 'normal',
+                    createdAt: serverTimestamp(),
+                    avatarUrl: '',
+                    f168Username: '',
+                    f168UsernameLastChanged: null,
+                    f168UsernameChangeCount: 0
+                });
+                showToast('Tạo tài khoản thành công.', 'success');
+                await loadUsers();
+                createUserForm.reset();
+            } catch (err) {
+                console.error(err);
+                showToast('Lỗi tạo tài khoản (Email đã tồn tại?).', 'error');
+            }
+        });
+
+        refreshUsersBtn.addEventListener('click', () => loadUsers());
+
+        searchBtn.addEventListener('click', () => {
+            const term = searchInput.value.trim();
+            loadUsers(term);
+        });
+
+        clearSearchBtn.addEventListener('click', () => {
+            searchInput.value = '';
+            loadUsers();
+        });
+
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                loginSection.classList.add('hidden');
+                adminSection.classList.remove('hidden');
+                loadUsers();
+            } else {
+                adminSection.classList.add('hidden');
+                loginSection.classList.remove('hidden');
+                userTableBody.innerHTML = '';
+            }
+        });
+    </script>
+</head>
+<body class="bg-[#0A192F] text-white min-h-screen flex flex-col items-center p-4">
+    <h1 class="text-2xl font-bold mb-4">Trang quản trị Tool Cho Thuê</h1>
+    <section id="login-section" class="w-full max-w-md bg-gray-800 p-6 rounded shadow-lg">
+        <h2 class="text-xl font-semibold mb-4">Đăng nhập quản trị viên</h2>
+        <form id="login-form" class="space-y-4">
+            <div>
+                <label for="admin-username" class="block mb-1">Tên đăng nhập hoặc email</label>
+                <input id="admin-username" type="text" class="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded" placeholder="Tên đăng nhập hoặc email" />
+            </div>
+            <div>
+                <label for="admin-password" class="block mb-1">Mật khẩu</label>
+                <input id="admin-password" type="password" class="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded" placeholder="Mật khẩu" />
+            </div>
+            <button type="submit" class="w-full bg-cyan-600 hover:bg-cyan-700 text-white py-2 rounded">Đăng nhập</button>
+        </form>
+    </section>
+    <section id="admin-section" class="w-full hidden max-w-4xl mt-6">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="text-xl font-semibold">Quản lý người dùng</h2>
+            <button id="logout-btn" class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded">Đăng xuất</button>
+        </div>
+        <div class="bg-gray-800 p-4 rounded mb-6">
+            <h3 class="text-lg font-medium mb-3">Tạo người dùng mới</h3>
+            <form id="create-user-form" class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div>
+                    <label for="new-username" class="block mb-1">Tên người dùng</label>
+                    <input id="new-username" type="text" class="w-full px-2 py-1 bg-gray-900 border border-gray-700 rounded" placeholder="Tên đăng nhập" />
+                </div>
+                <div>
+                    <label for="new-phone" class="block mb-1">Số điện thoại</label>
+                    <input id="new-phone" type="text" class="w-full px-2 py-1 bg-gray-900 border border-gray-700 rounded" placeholder="Số điện thoại" />
+                </div>
+                <div>
+                    <label for="new-password" class="block mb-1">Mật khẩu</label>
+                    <input id="new-password" type="password" class="w-full px-2 py-1 bg-gray-900 border border-gray-700 rounded" placeholder="Mật khẩu" />
+                </div>
+                <div>
+                    <label for="new-energy" class="block mb-1">Năng lượng ban đầu</label>
+                    <input id="new-energy" type="number" min="0" class="w-full px-2 py-1 bg-gray-900 border border-gray-700 rounded" placeholder="Mặc định 5" />
+                </div>
+                <div class="md:col-span-4">
+                    <button type="submit" class="mt-2 bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded w-full md:w-auto">Tạo tài khoản</button>
+                </div>
+            </form>
+        </div>
+        <div class="bg-gray-800 p-4 rounded">
+            <div class="flex flex-col md:flex-row md:items-end md:justify-between mb-3 space-y-3 md:space-y-0">
+                <div>
+                    <h3 class="text-lg font-medium mb-1">Danh sách người dùng</h3>
+                    <div class="flex space-x-2">
+                        <input id="search-user-input" type="text" class="px-2 py-1 bg-gray-900 border border-gray-700 rounded text-sm" placeholder="Tìm theo tên người dùng" />
+                        <button id="search-user-btn" class="bg-purple-500 hover:bg-purple-600 text-white px-3 py-1 rounded text-sm">Tìm</button>
+                        <button id="clear-search-btn" class="bg-gray-600 hover:bg-gray-700 text-white px-3 py-1 rounded text-sm">Xóa</button>
+                    </div>
+                </div>
+                <button id="refresh-users-btn" class="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1 rounded self-start md:self-auto">Làm mới</button>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="min-w-full text-sm text-left">
+                    <thead class="bg-gray-700">
+                        <tr>
+                            <th class="px-2 py-1">UID</th>
+                            <th class="px-2 py-1">Tên</th>
+                            <th class="px-2 py-1">SĐT</th>
+                            <th class="px-2 py-1">Năng lượng</th>
+                            <th class="px-2 py-1">Cấp</th>
+                            <th class="px-2 py-1">Nạp/Trừ</th>
+                            <th class="px-2 py-1">Hành động</th>
+                        </tr>
+                    </thead>
+                    <tbody id="user-table-body" class="bg-gray-900">
+                        </tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+</body>
+</html>
