@@ -9,9 +9,9 @@
         // --- Khởi tạo Firebase ---
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, doc, getDocs, setDoc, updateDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, collection, doc, getDoc, getDocs, setDoc, updateDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // Cấu hình Firebase MỚI (Project: toolchothue)
+        // Cấu hình Firebase (Project: toolchothue)
         const CONFIG = {
             firebase: {
                 apiKey: "AIzaSyDJu0KsERvaIsumIupZApM3i7S9bl_ihdo",
@@ -23,94 +23,215 @@
                 appId: "1:500092338170:web:2ca1966c92f63321c5ee43",
                 measurementId: "G-8JP0Q2R0NJ"
             },
-            // Hậu tố email giả lập cho user chỉ nhập username (ví dụ: admin -> admin@toolchothue.web.app)
             authDomainSuffix: "@toolchothue.web.app", 
             energy: {
                 initial: 5
             }
         };
 
-        // Khởi tạo ứng dụng và các dịch vụ
+        // App chính
         const firebaseApp = initializeApp(CONFIG.firebase);
         const auth = getAuth(firebaseApp);
         const db = getFirestore(firebaseApp);
 
-        // Truy xuất một số phần tử giao diện để điều khiển sau này
+        // App phụ (để tạo user không mất session)
+        const secondaryApp = initializeApp(CONFIG.firebase, "Secondary");
+        const secondaryAuth = getAuth(secondaryApp);
+
+        const SUPER_ADMIN = 'alisrr99'; // Tên tài khoản TRÙM
+
+        // DOM Elements
         const loginSection = document.getElementById('login-section');
         const adminSection = document.getElementById('admin-section');
-        const userTableBody = document.getElementById('user-table-body');
+        const superAdminControls = document.getElementById('super-admin-controls');
+        
         const loginForm = document.getElementById('login-form');
         const logoutBtn = document.getElementById('logout-btn');
+        
         const createUserForm = document.getElementById('create-user-form');
+        const createAdminForm = document.getElementById('create-admin-form');
+        
+        const userTableBody = document.getElementById('user-table-body');
         const refreshUsersBtn = document.getElementById('refresh-users-btn');
-
-        // Phần tử tìm kiếm người dùng
         const searchInput = document.getElementById('search-user-input');
         const searchBtn = document.getElementById('search-user-btn');
         const clearSearchBtn = document.getElementById('clear-search-btn');
 
-        /**
-         * Hiển thị thông báo đơn giản cho người dùng.
-         */
         function showToast(message, type = 'info') {
-            const colors = {
-                success: 'bg-green-500',
-                error: 'bg-red-500',
-                info: 'bg-blue-500'
-            };
+            const colors = { success: 'bg-green-500', error: 'bg-red-500', info: 'bg-blue-500' };
             const toast = document.createElement('div');
             toast.textContent = message;
-            toast.className = `${colors[type]} text-white px-4 py-2 rounded shadow fixed top-4 right-4 z-50`;
+            toast.className = `${colors[type]} text-white px-4 py-2 rounded shadow fixed top-4 right-4 z-50 animate-bounce`;
             document.body.appendChild(toast);
-            setTimeout(() => {
-                toast.remove();
-            }, 4000);
+            setTimeout(() => toast.remove(), 4000);
         }
 
-        /**
-         * Tải danh sách người dùng từ Firestore.
-         */
+        // --- AUTH & PERMISSION LOGIC ---
+        onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                try {
+                    // Kiểm tra quyền trong Firestore
+                    const userDoc = await getDoc(doc(db, 'users', user.uid));
+                    if (userDoc.exists()) {
+                        const userData = userDoc.data();
+                        const username = userData.username || '';
+
+                        // Logic kiểm tra quyền: Phải là 'admin' hoặc user đặc biệt 'alisrr99'
+                        if (userData.role === 'admin' || username === SUPER_ADMIN) {
+                            
+                            // Đăng nhập thành công, hiển thị giao diện Admin
+                            loginSection.classList.add('hidden');
+                            adminSection.classList.remove('hidden');
+                            
+                            // CHECK SUPER ADMIN: Chỉ alisrr99 mới thấy khu vực tạo Admin
+                            if (username === SUPER_ADMIN) {
+                                superAdminControls.classList.remove('hidden');
+                                showToast(`Chào mừng Super Admin: ${username}`, 'success');
+                            } else {
+                                superAdminControls.classList.add('hidden');
+                                showToast(`Chào mừng Admin: ${username}`, 'success');
+                            }
+
+                            loadUsers();
+                        } else {
+                            // Nếu là User thường -> ĐÁ RA NGOÀI
+                            await signOut(auth);
+                            showToast('Tài khoản này không có quyền truy cập Admin Panel!', 'error');
+                            adminSection.classList.add('hidden');
+                            loginSection.classList.remove('hidden');
+                        }
+                    } else {
+                        // Trường hợp acc mới chưa có trong firestore (ít gặp nếu code đúng)
+                        // Nếu username nhập vào khớp Super Admin thì cho qua để bootstrap
+                        const emailUsername = user.email.split('@')[0];
+                        if (emailUsername === SUPER_ADMIN) {
+                             loginSection.classList.add('hidden');
+                             adminSection.classList.remove('hidden');
+                             superAdminControls.classList.remove('hidden');
+                             // Tự fix data nếu thiếu
+                             await setDoc(doc(db, 'users', user.uid), {
+                                 username: SUPER_ADMIN,
+                                 role: 'admin',
+                                 energy: 99999,
+                                 level: 'omega'
+                             }, { merge: true });
+                             loadUsers();
+                        } else {
+                            await signOut(auth);
+                            showToast('Lỗi dữ liệu người dùng. Vui lòng liên hệ hỗ trợ.', 'error');
+                        }
+                    }
+                } catch (e) {
+                    console.error("Lỗi Auth:", e);
+                    showToast('Lỗi xác thực quyền hạn.', 'error');
+                    await signOut(auth);
+                }
+            } else {
+                adminSection.classList.add('hidden');
+                loginSection.classList.remove('hidden');
+            }
+        });
+
+        // Đăng nhập
+        loginForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            let identifier = document.getElementById('admin-username').value.trim();
+            const password = document.getElementById('admin-password').value;
+            if (!identifier) return showToast("Vui lòng nhập Username", "error");
+            if (!identifier.includes('@')) identifier += CONFIG.authDomainSuffix;
+            
+            try {
+                await signInWithEmailAndPassword(auth, identifier, password);
+                // Logic onAuthStateChanged sẽ tự chạy sau khi sign in thành công
+            } catch (err) {
+                // Nếu chưa có user nào và đang cố login bằng alisrr99 -> Tạo luôn (Bootstrap Super Admin)
+                if (err.code === 'auth/user-not-found' && identifier.startsWith(SUPER_ADMIN)) {
+                     try {
+                        const cred = await createUserWithEmailAndPassword(auth, identifier, password);
+                        await setDoc(doc(db, 'users', cred.user.uid), {
+                            uid: cred.user.uid,
+                            username: SUPER_ADMIN,
+                            level: 'omega',
+                            role: 'admin', // Super admin cũng là admin
+                            energy: 99999,
+                            createdAt: serverTimestamp()
+                        });
+                        showToast('Đã khởi tạo tài khoản Super Admin gốc!', 'success');
+                     } catch (createErr) {
+                         showToast('Lỗi tạo Super Admin: ' + createErr.message, 'error');
+                     }
+                } else {
+                    showToast('Sai tài khoản hoặc mật khẩu', 'error');
+                }
+            }
+        });
+
+        logoutBtn.addEventListener('click', async () => {
+            await signOut(auth);
+            location.reload();
+        });
+
+        // --- LOAD LIST USERS ---
         async function loadUsers(filterUsername) {
             userTableBody.innerHTML = '';
             try {
                 const querySnapshot = await getDocs(collection(db, 'users'));
                 const filter = filterUsername ? filterUsername.toLowerCase() : null;
+                
                 querySnapshot.forEach((docSnap) => {
                     const data = docSnap.data();
-                    // Lọc theo tên nếu có filter
                     if (filter && !(data.username || '').toLowerCase().includes(filter)) return;
+
                     const tr = document.createElement('tr');
-                    tr.className = 'border-b border-gray-700';
+                    tr.className = 'border-b border-gray-700 hover:bg-gray-800 transition duration-150';
                     
+                    // Style riêng cho Admin và User
+                    const isRowAdmin = data.role === 'admin';
+                    if (isRowAdmin) tr.classList.add('bg-yellow-900/10'); // Highlight nhẹ hàng admin
+
                     // Cột UID
                     const uidTd = document.createElement('td');
                     uidTd.textContent = docSnap.id;
-                    uidTd.className = 'px-2 py-1 text-xs break-all';
+                    uidTd.className = 'px-4 py-3 text-xs text-gray-500 font-mono break-all max-w-[100px] truncate';
+                    uidTd.title = docSnap.id;
                     
-                    // Cột tên người dùng
+                    // Cột Username
                     const nameTd = document.createElement('td');
-                    nameTd.textContent = data.username || '';
-                    nameTd.className = 'px-2 py-1';
+                    if (data.username === SUPER_ADMIN) {
+                         nameTd.innerHTML = `<span class="text-red-500 font-bold uppercase tracking-wider flex items-center gap-1">👑 ${data.username}</span>`;
+                    } else if (isRowAdmin) {
+                         nameTd.innerHTML = `<span class="text-yellow-400 font-bold flex items-center gap-1">🛡️ ${data.username}</span>`;
+                    } else {
+                         nameTd.innerHTML = `<span class="text-cyan-400 font-medium">${data.username || 'No Name'}</span>`;
+                    }
+                    nameTd.className = 'px-4 py-3';
                     
-                    // Cột số điện thoại
-                    const phoneTd = document.createElement('td');
-                    phoneTd.textContent = data.phoneNumber || '';
-                    phoneTd.className = 'px-2 py-1';
-                    
-                    // Cột năng lượng hiện có
-                    const energyTd = document.createElement('td');
-                    energyTd.textContent = data.energy ?? 0;
-                    energyTd.className = 'px-2 py-1';
+                    // Cột Info (Gộp Phone + Tele cho gọn)
+                    const infoTd = document.createElement('td');
+                    infoTd.className = 'px-4 py-3 text-sm';
+                    let infoHtml = '';
+                    if (data.phoneNumber) infoHtml += `<div class="text-gray-300">📱 ${data.phoneNumber}</div>`;
+                    if (data.telegram) {
+                         const cleanTele = data.telegram.replace('@', '');
+                         infoHtml += `<a href="https://t.me/${cleanTele}" target="_blank" class="text-blue-400 hover:text-blue-300 block">✈️ ${data.telegram}</a>`;
+                    }
+                    if (!infoHtml) infoHtml = '<span class="text-gray-600">-</span>';
+                    infoTd.innerHTML = infoHtml;
 
-                    // Cột cấp bậc (THƯỜNG / VIP / V-VIP / PREMIUM / OMEGA)
+                    // Cột Energy
+                    const energyTd = document.createElement('td');
+                    energyTd.innerHTML = `<span class="font-mono text-lg ${data.energy > 0 ? 'text-green-400' : 'text-red-400'}">${data.energy ?? 0}</span>`;
+                    energyTd.className = 'px-4 py-3 text-center';
+
+                    // Cột Rank
                     const levelTd = document.createElement('td');
                     const levelSelect = document.createElement('select');
-                    levelSelect.className = 'w-28 bg-gray-800 text-white border border-gray-600 rounded px-1';
+                    levelSelect.className = 'bg-gray-900 text-xs text-white border border-gray-600 rounded px-2 py-1 focus:outline-none focus:border-cyan-500 transition-colors';
                     const levels = [
-                        { value: 'normal', label: 'THƯỜNG' },
+                        { value: 'normal', label: 'Thường' },
                         { value: 'vip', label: 'VIP' },
                         { value: 'v-vip', label: 'V-VIP' },
-                        { value: 'premium', label: 'PREMIUM' },
+                        { value: 'premium', label: 'Premium' },
                         { value: 'omega', label: 'OMEGA' }
                     ];
                     levels.forEach(({ value, label }) => {
@@ -119,329 +240,298 @@
                         opt.textContent = label;
                         levelSelect.appendChild(opt);
                     });
-                    
                     levelSelect.value = data.level || 'normal';
                     
-                    const getLevelColor = (level) => {
-                        switch (level) {
-                            case 'vip': return '#FFD700';
-                            case 'v-vip': return '#FF4500';
-                            case 'premium': return '#ff00ff';
-                            case 'omega': return '#00FF00';
-                            default: return '#00ffff';
-                        }
+                    // Màu sắc cho rank
+                    const updateRankColor = () => {
+                         const val = levelSelect.value;
+                         if (val === 'omega') levelSelect.style.color = '#00FF00'; // Green
+                         else if (val === 'premium') levelSelect.style.color = '#FF00FF'; // Magenta
+                         else if (val === 'v-vip') levelSelect.style.color = '#FF4500'; // OrangeRed
+                         else if (val === 'vip') levelSelect.style.color = '#FFD700'; // Gold
+                         else levelSelect.style.color = '#ccc';
                     };
-                    
-                    // Style ban đầu
-                    {
-                        const initColor = getLevelColor(levelSelect.value);
-                        levelSelect.style.color = initColor;
-                        levelSelect.style.borderColor = initColor;
-                        levelSelect.style.boxShadow = `0 0 6px ${initColor}`;
-                        levelSelect.style.fontWeight = '700';
-                    }
+                    updateRankColor();
 
-                    // Sự kiện thay đổi cấp bậc
                     levelSelect.onchange = async () => {
-                        const newLevel = levelSelect.value;
-                        const newColor = getLevelColor(newLevel);
-                        levelSelect.style.color = newColor;
-                        levelSelect.style.borderColor = newColor;
-                        levelSelect.style.boxShadow = `0 0 6px ${newColor}`;
                         try {
-                            await updateDoc(doc(db, 'users', docSnap.id), { level: newLevel });
-                            showToast(`Đã cập nhật cấp bậc cho ${data.username} thành ${newLevel.toUpperCase()}.`, 'success');
-                            data.level = newLevel;
-                        } catch (err) {
-                            console.error(err);
-                            showToast('Không thể cập nhật cấp bậc.', 'error');
-                        }
+                            await updateDoc(doc(db, 'users', docSnap.id), { level: levelSelect.value });
+                            showToast('Đã cập nhật cấp độ', 'success');
+                            updateRankColor();
+                        } catch (err) { showToast('Lỗi update', 'error'); }
                     };
                     levelTd.appendChild(levelSelect);
-                    levelTd.className = 'px-2 py-1';
+                    levelTd.className = 'px-4 py-3';
 
-                    // Cột nhập số năng lượng
-                    const inputTd = document.createElement('td');
-                    const energyInput = document.createElement('input');
-                    energyInput.type = 'number';
-                    energyInput.min = '0';
-                    energyInput.className = 'w-20 bg-gray-800 text-white border border-gray-600 rounded px-1';
-                    inputTd.appendChild(energyInput);
-
-                    // Cột hành động
+                    // Cột Thao tác Energy
                     const actionTd = document.createElement('td');
-                    const actionWrapper = document.createElement('div');
-                    actionWrapper.className = 'flex space-x-2';
-
-                    // Nút nạp
-                    const addButton = document.createElement('button');
-                    addButton.textContent = 'Nạp';
-                    addButton.className = 'bg-cyan-600 hover:bg-cyan-700 text-white px-3 py-1 rounded';
-                    addButton.onclick = async () => {
-                        const value = parseInt(energyInput.value);
-                        if (isNaN(value) || value <= 0) {
-                            showToast('Vui lòng nhập số hợp lệ.', 'error');
-                            return;
-                        }
-                        try {
-                            await updateDoc(doc(db, 'users', docSnap.id), {
-                                energy: (data.energy ?? 0) + value
-                            });
-                            showToast(`Đã nạp ${value} năng lượng cho ${data.username}.`, 'success');
-                            data.energy = (data.energy ?? 0) + value;
-                            energyTd.textContent = data.energy;
-                            energyInput.value = '';
-                        } catch (err) {
-                            console.error(err);
-                            showToast('Lỗi khi nạp năng lượng.', 'error');
-                        }
-                    };
-                    actionWrapper.appendChild(addButton);
-
-                    // Nút trừ
-                    const subtractButton = document.createElement('button');
-                    subtractButton.textContent = 'Trừ';
-                    subtractButton.className = 'bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded';
-                    subtractButton.onclick = async () => {
-                        const value = parseInt(energyInput.value);
-                        if (isNaN(value) || value <= 0) {
-                            showToast('Vui lòng nhập số hợp lệ.', 'error');
-                            return;
-                        }
-                        const currentEnergy = data.energy ?? 0;
-                        if (currentEnergy - value < 0) {
-                            showToast('Không đủ năng lượng để trừ.', 'error');
-                            return;
-                        }
-                        try {
-                            await updateDoc(doc(db, 'users', docSnap.id), {
-                                energy: currentEnergy - value
-                            });
-                            showToast(`Đã trừ ${value} năng lượng của ${data.username}.`, 'success');
-                            data.energy = currentEnergy - value;
-                            energyTd.textContent = data.energy;
-                            energyInput.value = '';
-                        } catch (err) {
-                            console.error(err);
-                            showToast('Lỗi khi trừ năng lượng.', 'error');
-                        }
-                    };
-                    actionWrapper.appendChild(subtractButton);
+                    const actionDiv = document.createElement('div');
+                    actionDiv.className = 'flex items-center space-x-2';
                     
-                    actionTd.appendChild(actionWrapper);
-                    actionTd.className = 'px-2 py-1';
+                    const amountInput = document.createElement('input');
+                    amountInput.type = 'number';
+                    amountInput.className = 'w-16 bg-gray-800 border border-gray-600 rounded px-1 py-1 text-center text-white text-sm focus:border-cyan-500 outline-none';
+                    amountInput.placeholder = '0';
+
+                    const btnAdd = document.createElement('button');
+                    btnAdd.textContent = '+';
+                    btnAdd.className = 'bg-cyan-600 hover:bg-cyan-500 text-white w-7 h-7 rounded flex items-center justify-center font-bold transition';
+                    btnAdd.onclick = () => handleEnergyChange(docSnap.id, data.energy, amountInput.value, true);
+
+                    const btnSub = document.createElement('button');
+                    btnSub.textContent = '-';
+                    btnSub.className = 'bg-red-600 hover:bg-red-500 text-white w-7 h-7 rounded flex items-center justify-center font-bold transition';
+                    btnSub.onclick = () => handleEnergyChange(docSnap.id, data.energy, amountInput.value, false);
+
+                    actionDiv.append(amountInput, btnAdd, btnSub);
+                    actionTd.appendChild(actionDiv);
+                    actionTd.className = 'px-4 py-3';
 
                     tr.appendChild(uidTd);
                     tr.appendChild(nameTd);
-                    tr.appendChild(phoneTd);
+                    tr.appendChild(infoTd);
                     tr.appendChild(energyTd);
                     tr.appendChild(levelTd);
-                    tr.appendChild(inputTd);
                     tr.appendChild(actionTd);
                     userTableBody.appendChild(tr);
                 });
-                if (filter && !userTableBody.firstChild) {
-                    showToast('Không tìm thấy người dùng phù hợp.', 'info');
-                }
             } catch (error) {
                 console.error(error);
-                showToast('Lỗi tải danh sách người dùng (Kiểm tra Firestore Rules).', 'error');
+                showToast('Lỗi tải danh sách user', 'error');
             }
         }
 
-        // Xử lý sự kiện đăng nhập
-        loginForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const usernameInput = document.getElementById('admin-username');
-            const passwordInput = document.getElementById('admin-password');
-            let identifier = usernameInput.value.trim();
-            const password = passwordInput.value;
-            if (!identifier || !password) {
-                showToast('Vui lòng nhập đầy đủ thông tin.', 'error');
-                return;
-            }
-            // Tự động thêm hậu tố nếu không có @
-            if (!identifier.includes('@')) {
-                identifier = `${identifier.toLowerCase()}${CONFIG.authDomainSuffix}`;
-            }
-            try {
-                await signInWithEmailAndPassword(auth, identifier, password);
-                showToast('Đăng nhập thành công.', 'success');
-            } catch (err) {
-                console.error(err);
-                if (err.code === 'auth/user-not-found') {
-                    // Tự động tạo admin nếu chưa có
-                    try {
-                        const userCredential = await createUserWithEmailAndPassword(auth, identifier, password);
-                        const newUsername = identifier.split('@')[0];
-                        await setDoc(doc(db, 'users', userCredential.user.uid), {
-                            uid: userCredential.user.uid,
-                            username: newUsername,
-                            phoneNumber: '',
-                            energy: CONFIG.energy.initial,
-                            level: 'normal',
-                            createdAt: serverTimestamp(),
-                            avatarUrl: '',
-                            f168Username: '',
-                            f168UsernameLastChanged: null,
-                            f168UsernameChangeCount: 0
-                        });
-                        showToast('Tài khoản mới đã được tạo.', 'success');
-                    } catch (createErr) {
-                        console.error(createErr);
-                        showToast('Lỗi tạo tài khoản mới.', 'error');
-                    }
-                } else {
-                    showToast('Đăng nhập thất bại: ' + err.code, 'error');
-                }
-            }
-        });
+        async function handleEnergyChange(uid, currentEnergy, amountStr, isAdding) {
+            const amount = parseInt(amountStr);
+            if (!amount || amount <= 0) return showToast('Vui lòng nhập số hợp lệ', 'error');
+            
+            const current = currentEnergy || 0;
+            const newVal = isAdding ? current + amount : current - amount;
+            if (newVal < 0) return showToast('Không thể trừ âm tiền', 'error');
 
-        // Xử lý sự kiện đăng xuất
-        logoutBtn.addEventListener('click', async () => {
             try {
-                await signOut(auth);
-                showToast('Đã đăng xuất.', 'info');
-            } catch (err) {
-                console.error(err);
+                await updateDoc(doc(db, 'users', uid), { energy: newVal });
+                showToast(`Đã ${isAdding ? 'cộng' : 'trừ'} ${amount} năng lượng`, 'success');
+                loadUsers(); // Reload lại bảng
+            } catch (e) {
+                showToast('Lỗi cập nhật năng lượng', 'error');
             }
-        });
+        }
 
-        // Xử lý tạo tài khoản người dùng mới
+        // --- TẠO USER THƯỜNG ---
         createUserForm.addEventListener('submit', async (e) => {
             e.preventDefault();
-            const newUsername = document.getElementById('new-username').value.trim().toLowerCase();
-            const newPhone = document.getElementById('new-phone').value.trim();
-            const newPassword = document.getElementById('new-password').value;
-            const newEnergy = parseInt(document.getElementById('new-energy').value);
+            const username = document.getElementById('new-username').value.trim().toLowerCase();
+            const password = document.getElementById('new-password').value;
+            const phone = document.getElementById('new-phone').value.trim();
+            const telegram = document.getElementById('new-telegram').value.trim();
+            const energy = parseInt(document.getElementById('new-energy').value) || 0;
 
-            if (!newUsername || !newPhone || !newPassword) {
-                showToast('Thiếu thông tin.', 'error');
-                return;
-            }
+            if (!username || !password) return showToast('Thiếu thông tin đăng nhập', 'error');
 
             try {
-                const email = `${newUsername}${CONFIG.authDomainSuffix}`;
-                const userCredential = await createUserWithEmailAndPassword(auth, email, newPassword);
-                await setDoc(doc(db, 'users', userCredential.user.uid), {
-                    uid: userCredential.user.uid,
-                    username: newUsername,
-                    phoneNumber: newPhone,
-                    energy: isNaN(newEnergy) ? CONFIG.energy.initial : newEnergy,
+                // Tạo trên app phụ để không mất session
+                const email = `${username}${CONFIG.authDomainSuffix}`;
+                const cred = await createUserWithEmailAndPassword(secondaryAuth, email, password);
+                
+                await setDoc(doc(db, 'users', cred.user.uid), {
+                    uid: cred.user.uid,
+                    username: username,
+                    phoneNumber: phone,
+                    telegram: telegram,
+                    energy: energy,
                     level: 'normal',
-                    createdAt: serverTimestamp(),
-                    avatarUrl: '',
-                    f168Username: '',
-                    f168UsernameLastChanged: null,
-                    f168UsernameChangeCount: 0
+                    role: 'user', // Quan trọng: Là User thường
+                    createdAt: serverTimestamp()
                 });
-                showToast('Tạo tài khoản thành công.', 'success');
-                await loadUsers();
+
+                await signOut(secondaryAuth); // Clear session phụ
+                showToast(`Đã tạo User: ${username}`, 'success');
                 createUserForm.reset();
+                loadUsers();
             } catch (err) {
-                console.error(err);
-                showToast('Lỗi tạo tài khoản (Email đã tồn tại?).', 'error');
+                showToast('Lỗi tạo user: ' + err.message, 'error');
+            }
+        });
+
+        // --- TẠO ADMIN (CHỈ ALISRR99 DÙNG) ---
+        createAdminForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const username = document.getElementById('new-admin-username').value.trim().toLowerCase();
+            const password = document.getElementById('new-admin-password').value;
+
+            if (!username || !password) return showToast('Thiếu thông tin Admin mới', 'error');
+
+            try {
+                const email = `${username}${CONFIG.authDomainSuffix}`;
+                const cred = await createUserWithEmailAndPassword(secondaryAuth, email, password);
+                
+                await setDoc(doc(db, 'users', cred.user.uid), {
+                    uid: cred.user.uid,
+                    username: username,
+                    role: 'admin',  // Quan trọng: Là Admin
+                    energy: 9999,   // Admin được cấp nhiều năng lượng test
+                    level: 'omega',
+                    createdAt: serverTimestamp()
+                });
+
+                await signOut(secondaryAuth);
+                showToast(`Đã tạo thành công Admin: ${username}`, 'success');
+                createAdminForm.reset();
+                loadUsers();
+            } catch (err) {
+                showToast('Lỗi tạo Admin: ' + err.message, 'error');
             }
         });
 
         refreshUsersBtn.addEventListener('click', () => loadUsers());
+        searchBtn.addEventListener('click', () => loadUsers(searchInput.value.trim()));
+        clearSearchBtn.addEventListener('click', () => { searchInput.value = ''; loadUsers(); });
 
-        searchBtn.addEventListener('click', () => {
-            const term = searchInput.value.trim();
-            loadUsers(term);
-        });
-
-        clearSearchBtn.addEventListener('click', () => {
-            searchInput.value = '';
-            loadUsers();
-        });
-
-        onAuthStateChanged(auth, (user) => {
-            if (user) {
-                loginSection.classList.add('hidden');
-                adminSection.classList.remove('hidden');
-                loadUsers();
-            } else {
-                adminSection.classList.add('hidden');
-                loginSection.classList.remove('hidden');
-                userTableBody.innerHTML = '';
-            }
-        });
     </script>
 </head>
-<body class="bg-[#0A192F] text-white min-h-screen flex flex-col items-center p-4">
-    <h1 class="text-2xl font-bold mb-4">Trang quản trị Tool Cho Thuê</h1>
-    <section id="login-section" class="w-full max-w-md bg-gray-800 p-6 rounded shadow-lg">
-        <h2 class="text-xl font-semibold mb-4">Đăng nhập quản trị viên</h2>
-        <form id="login-form" class="space-y-4">
+<body class="bg-[#0A192F] text-gray-100 font-sans min-h-screen flex flex-col items-center p-4">
+    
+    <!-- HEADER -->
+    <header class="w-full max-w-6xl flex justify-between items-center py-6 mb-4">
+        <h1 class="text-3xl font-bold tracking-widest text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-purple-500 uppercase">
+            Admin Control Panel
+        </h1>
+        <div class="text-xs text-gray-500">System v2.1</div>
+    </header>
+    
+    <!-- LOGIN SECTION -->
+    <section id="login-section" class="w-full max-w-md bg-gray-800/80 backdrop-blur-sm p-8 rounded-2xl shadow-2xl border border-gray-700">
+        <div class="text-center mb-8">
+            <div class="inline-block p-4 rounded-full bg-gray-900 mb-4 border border-cyan-500/30">
+                <span class="text-4xl">🔐</span>
+            </div>
+            <h2 class="text-xl font-semibold text-white">Đăng Nhập Quản Trị</h2>
+            <p class="text-sm text-gray-400 mt-2">Khu vực dành riêng cho Admin</p>
+        </div>
+        <form id="login-form" class="space-y-5">
             <div>
-                <label for="admin-username" class="block mb-1">Tên đăng nhập hoặc email</label>
-                <input id="admin-username" type="text" class="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded" placeholder="Tên đăng nhập hoặc email" />
+                <label class="block text-xs font-bold text-gray-400 mb-1 uppercase">Username</label>
+                <input id="admin-username" type="text" class="w-full px-4 py-3 bg-gray-900/50 border border-gray-600 rounded-lg focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 outline-none transition text-white" placeholder="Nhập username..." />
             </div>
             <div>
-                <label for="admin-password" class="block mb-1">Mật khẩu</label>
-                <input id="admin-password" type="password" class="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded" placeholder="Mật khẩu" />
+                <label class="block text-xs font-bold text-gray-400 mb-1 uppercase">Mật khẩu</label>
+                <input id="admin-password" type="password" class="w-full px-4 py-3 bg-gray-900/50 border border-gray-600 rounded-lg focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 outline-none transition text-white" placeholder="••••••••" />
             </div>
-            <button type="submit" class="w-full bg-cyan-600 hover:bg-cyan-700 text-white py-2 rounded">Đăng nhập</button>
+            <button type="submit" class="w-full bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold py-3 rounded-lg shadow-lg transform hover:scale-[1.02] transition-all duration-200">
+                XÁC THỰC & TRUY CẬP
+            </button>
         </form>
     </section>
-    <section id="admin-section" class="w-full hidden max-w-4xl mt-6">
-        <div class="flex justify-between items-center mb-4">
-            <h2 class="text-xl font-semibold">Quản lý người dùng</h2>
-            <button id="logout-btn" class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded">Đăng xuất</button>
+
+    <!-- ADMIN DASHBOARD -->
+    <section id="admin-section" class="w-full hidden max-w-7xl space-y-8 pb-10">
+        
+        <!-- Top Bar -->
+        <div class="flex justify-between items-center bg-gray-800 p-4 rounded-xl border border-gray-700 shadow-lg">
+            <div class="flex items-center space-x-3">
+                <span class="w-3 h-3 bg-green-500 rounded-full animate-pulse"></span>
+                <h2 class="text-lg font-semibold text-gray-200">Hệ thống đang hoạt động</h2>
+            </div>
+            <button id="logout-btn" class="flex items-center space-x-2 bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/50 px-4 py-2 rounded-lg text-sm font-bold transition">
+                <span>Đăng xuất</span>
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
+            </button>
         </div>
-        <div class="bg-gray-800 p-4 rounded mb-6">
-            <h3 class="text-lg font-medium mb-3">Tạo người dùng mới</h3>
-            <form id="create-user-form" class="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div>
-                    <label for="new-username" class="block mb-1">Tên người dùng</label>
-                    <input id="new-username" type="text" class="w-full px-2 py-1 bg-gray-900 border border-gray-700 rounded" placeholder="Tên đăng nhập" />
+
+        <!-- KHU VỰC SUPER ADMIN (Chỉ alisrr99 thấy) -->
+        <div id="super-admin-controls" class="hidden relative group">
+            <div class="absolute -inset-1 bg-gradient-to-r from-yellow-600 to-red-600 rounded-2xl blur opacity-25 group-hover:opacity-50 transition duration-1000"></div>
+            <div class="relative bg-gray-900 p-6 rounded-xl border border-yellow-600/50 shadow-xl">
+                <div class="flex items-center justify-between mb-6 border-b border-yellow-600/30 pb-4">
+                    <h3 class="text-xl font-bold text-yellow-500 flex items-center gap-2">
+                        👑 KHU VỰC SUPER ADMIN
+                    </h3>
+                    <span class="text-xs font-mono text-yellow-700 bg-yellow-900/30 px-2 py-1 rounded border border-yellow-800">alisrr99 only</span>
                 </div>
-                <div>
-                    <label for="new-phone" class="block mb-1">Số điện thoại</label>
-                    <input id="new-phone" type="text" class="w-full px-2 py-1 bg-gray-900 border border-gray-700 rounded" placeholder="Số điện thoại" />
+                
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-6 items-end">
+                    <div class="md:col-span-3">
+                        <label class="block text-sm text-gray-400 mb-2">Tạo tài khoản Admin Mới (Quyền quản lý)</label>
+                        <form id="create-admin-form" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <input id="new-admin-username" type="text" class="px-4 py-2 bg-black border border-yellow-700 rounded text-yellow-100 placeholder-gray-600 focus:border-yellow-500 focus:ring-1 focus:ring-yellow-500 outline-none" placeholder="Username Admin mới" required />
+                            <input id="new-admin-password" type="password" class="px-4 py-2 bg-black border border-yellow-700 rounded text-yellow-100 placeholder-gray-600 focus:border-yellow-500 focus:ring-1 focus:ring-yellow-500 outline-none" placeholder="Mật khẩu" required />
+                            <button type="submit" class="md:col-span-2 mt-2 bg-yellow-600 hover:bg-yellow-500 text-black font-bold py-2 rounded shadow-lg shadow-yellow-900/40 transition">
+                                ⚡ CẤP QUYỀN ADMIN
+                            </button>
+                        </form>
+                    </div>
+                    <div class="hidden md:block text-xs text-gray-500 italic border-l border-gray-700 pl-4">
+                        * Tài khoản được tạo tại đây sẽ có quyền truy cập Admin Panel.<br>
+                        * Không thể tạo thêm Admin khác.
+                    </div>
                 </div>
-                <div>
-                    <label for="new-password" class="block mb-1">Mật khẩu</label>
-                    <input id="new-password" type="password" class="w-full px-2 py-1 bg-gray-900 border border-gray-700 rounded" placeholder="Mật khẩu" />
+            </div>
+        </div>
+
+        <!-- CREATE REGULAR USER (Dành cho cả Super Admin & Admin thường) -->
+        <div class="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
+            <h3 class="text-lg font-bold text-green-400 mb-6 flex items-center gap-2 border-b border-gray-700 pb-2">
+                <span>➕</span> Tạo Khách Thuê Mới (User thường)
+            </h3>
+            <form id="create-user-form" class="grid grid-cols-1 md:grid-cols-6 gap-4">
+                <div class="md:col-span-1">
+                    <input id="new-username" type="text" class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded focus:border-green-500 outline-none transition" placeholder="Username *" required />
                 </div>
-                <div>
-                    <label for="new-energy" class="block mb-1">Năng lượng ban đầu</label>
-                    <input id="new-energy" type="number" min="0" class="w-full px-2 py-1 bg-gray-900 border border-gray-700 rounded" placeholder="Mặc định 5" />
+                <div class="md:col-span-1">
+                    <input id="new-password" type="password" class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded focus:border-green-500 outline-none transition" placeholder="Password *" required />
                 </div>
-                <div class="md:col-span-4">
-                    <button type="submit" class="mt-2 bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded w-full md:w-auto">Tạo tài khoản</button>
+                <div class="md:col-span-1">
+                    <input id="new-phone" type="text" class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded focus:border-green-500 outline-none transition" placeholder="SĐT" />
+                </div>
+                <div class="md:col-span-1">
+                    <input id="new-telegram" type="text" class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded focus:border-green-500 outline-none transition" placeholder="Telegram (@abc)" />
+                </div>
+                <div class="md:col-span-1">
+                    <input id="new-energy" type="number" class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded focus:border-green-500 outline-none transition" placeholder="Energy (Mặc định 0)" />
+                </div>
+                <div class="md:col-span-1">
+                    <button type="submit" class="w-full bg-green-600 hover:bg-green-500 text-white font-bold py-2 rounded shadow transition h-full">Tạo User</button>
                 </div>
             </form>
         </div>
-        <div class="bg-gray-800 p-4 rounded">
-            <div class="flex flex-col md:flex-row md:items-end md:justify-between mb-3 space-y-3 md:space-y-0">
-                <div>
-                    <h3 class="text-lg font-medium mb-1">Danh sách người dùng</h3>
-                    <div class="flex space-x-2">
-                        <input id="search-user-input" type="text" class="px-2 py-1 bg-gray-900 border border-gray-700 rounded text-sm" placeholder="Tìm theo tên người dùng" />
-                        <button id="search-user-btn" class="bg-purple-500 hover:bg-purple-600 text-white px-3 py-1 rounded text-sm">Tìm</button>
-                        <button id="clear-search-btn" class="bg-gray-600 hover:bg-gray-700 text-white px-3 py-1 rounded text-sm">Xóa</button>
+
+        <!-- USER LIST -->
+        <div class="bg-gray-800 rounded-xl shadow-lg border border-gray-700 overflow-hidden">
+            <div class="p-4 bg-gray-800 border-b border-gray-700 flex flex-col md:flex-row justify-between items-center gap-4">
+                <h3 class="text-lg font-bold text-purple-400">Danh sách tài khoản</h3>
+                <div class="flex w-full md:w-auto space-x-2">
+                    <div class="relative flex-1 md:w-64">
+                        <input id="search-user-input" type="text" class="w-full pl-8 pr-3 py-1.5 bg-gray-900 border border-gray-600 rounded text-sm focus:border-purple-500 outline-none transition" placeholder="Tìm theo tên..." />
+                        <span class="absolute left-2.5 top-1.5 text-gray-500">🔍</span>
                     </div>
+                    <button id="search-user-btn" class="bg-purple-600 hover:bg-purple-500 px-4 py-1.5 rounded text-sm font-bold text-white transition">Tìm</button>
+                    <button id="clear-search-btn" class="bg-gray-700 hover:bg-gray-600 px-4 py-1.5 rounded text-sm text-white transition">Xóa</button>
+                    <button id="refresh-users-btn" class="bg-blue-600 hover:bg-blue-500 px-4 py-1.5 rounded text-sm font-bold text-white transition flex items-center gap-1">
+                        <span>↻</span> Refresh
+                    </button>
                 </div>
-                <button id="refresh-users-btn" class="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1 rounded self-start md:self-auto">Làm mới</button>
             </div>
+            
             <div class="overflow-x-auto">
                 <table class="min-w-full text-sm text-left">
-                    <thead class="bg-gray-700">
+                    <thead class="bg-gray-900 text-gray-400 uppercase text-xs tracking-wider">
                         <tr>
-                            <th class="px-2 py-1">UID</th>
-                            <th class="px-2 py-1">Tên</th>
-                            <th class="px-2 py-1">SĐT</th>
-                            <th class="px-2 py-1">Năng lượng</th>
-                            <th class="px-2 py-1">Cấp</th>
-                            <th class="px-2 py-1">Nạp/Trừ</th>
-                            <th class="px-2 py-1">Hành động</th>
+                            <th class="px-4 py-3 font-medium">UID</th>
+                            <th class="px-4 py-3 font-medium">Username</th>
+                            <th class="px-4 py-3 font-medium">Liên hệ</th>
+                            <th class="px-4 py-3 font-medium text-center">Energy</th>
+                            <th class="px-4 py-3 font-medium">Cấp bậc</th>
+                            <th class="px-4 py-3 font-medium">Nạp/Trừ</th>
                         </tr>
                     </thead>
-                    <tbody id="user-table-body" class="bg-gray-900">
-                        </tbody>
+                    <tbody id="user-table-body" class="divide-y divide-gray-700">
+                        <!-- Data will come here -->
+                    </tbody>
                 </table>
+            </div>
+            <div class="p-3 bg-gray-900 text-center text-xs text-gray-600">
+                Hiển thị tối đa kết quả mới nhất. Sử dụng tìm kiếm để lọc cụ thể.
             </div>
         </div>
     </section>
