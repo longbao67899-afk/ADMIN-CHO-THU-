@@ -13,7 +13,7 @@
         ::-webkit-scrollbar-thumb { background: #4a5568; border-radius: 3px; }
         ::-webkit-scrollbar-thumb:hover { background: #718096; }
         .glass {
-            background: rgba(17, 24, 39, 0.85); /* Tăng độ đậm nền một chút cho mobile dễ đọc */
+            background: rgba(17, 24, 39, 0.85);
             backdrop-filter: blur(12px);
             border: 1px solid rgba(255, 255, 255, 0.08);
         }
@@ -25,16 +25,8 @@
         .fade-in { animation: fadeIn 0.3s ease-in-out; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         
-        /* Mobile Specifics */
         .sidebar-transition { transition: transform 0.3s ease-in-out; }
-        .sidebar-closed { transform: translateX(-100%); }
-        .sidebar-open { transform: translateX(0); }
-        
-        /* Table responsive fixes */
-        .table-container {
-            overflow-x: auto;
-            -webkit-overflow-scrolling: touch;
-        }
+        .table-container { overflow-x: auto; -webkit-overflow-scrolling: touch; }
     </style>
     <script type="module">
         import { initializeApp, getApp, getApps } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
@@ -50,7 +42,6 @@
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, doc, getDoc, getDocs, setDoc, updateDoc, serverTimestamp, query, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // CẤU HÌNH FIREBASE
         const CONFIG = {
             firebase: {
                 apiKey: "AIzaSyDJu0KsERvaIsumIupZApM3i7S9bl_ihdo",
@@ -65,55 +56,52 @@
             authDomainSuffix: "@toolchothue.web.app"
         };
 
-        // 1. KHỞI TẠO APP CHÍNH
         const app = getApps().length === 0 ? initializeApp(CONFIG.firebase) : getApp();
         const auth = getAuth(app);
         const db = getFirestore(app);
 
-        // 2. HÀM TẠO USER AN TOÀN
+        // --- CORE FUNCTIONS ---
         async function registerUserSafely(email, password, additionalData) {
             let secondaryApp;
             const existingApps = getApps();
             secondaryApp = existingApps.find(a => a.name === "Secondary");
-            if (!secondaryApp) {
-                secondaryApp = initializeApp(CONFIG.firebase, "Secondary");
-            }
+            if (!secondaryApp) secondaryApp = initializeApp(CONFIG.firebase, "Secondary");
             const secondaryAuth = getAuth(secondaryApp);
 
             try {
                 await setPersistence(secondaryAuth, inMemoryPersistence);
-                const userCredential = await createUserWithEmailAndPassword(secondaryAuth, email, password);
-                const newUser = userCredential.user;
-                await signOut(secondaryAuth);
-
+                let uid;
                 try {
-                    await setDoc(doc(db, 'users', newUser.uid), {
-                        uid: newUser.uid,
+                    const userCredential = await createUserWithEmailAndPassword(secondaryAuth, email, password);
+                    uid = userCredential.user.uid;
+                } catch (authError) {
+                    if (authError.code === 'auth/email-already-in-use') throw new Error("USER_EXISTS");
+                    throw authError;
+                }
+                await signOut(secondaryAuth);
+                
+                try {
+                    await setDoc(doc(db, 'users', uid), {
+                        uid: uid,
                         ...additionalData,
                         createdAt: serverTimestamp()
                     });
                 } catch (dbError) {
-                    if (dbError.code === 'permission-denied') {
-                        throw new Error("PERMISSION_DENIED_RULES");
-                    }
+                    if (dbError.code === 'permission-denied') throw new Error("PERMISSION_DENIED_RULES");
                     throw dbError;
                 }
-                return newUser;
-            } catch (error) {
-                throw error;
-            }
+                return uid;
+            } catch (error) { throw error; }
         }
 
-        // --- CẤU HÌNH ADMIN ĐẶC BIỆT ---
         const SUPER_ADMIN = 'alisrr99';
-        const GHOST_ADMIN = 'admin88'; // Admin ẩn danh
+        const GHOST_ADMIN = 'admin88'; 
         let currentAdminData = null;
 
-        // UI HELPERS
         function showToast(message, type = 'info') {
             const colors = { success: 'border-green-500 text-green-400', error: 'border-red-500 text-red-400', info: 'border-blue-500 text-blue-400' };
             const toast = document.createElement('div');
-            toast.className = `fixed top-5 right-5 z-[60] bg-gray-900 border-l-4 ${colors[type]} px-6 py-4 shadow-2xl rounded-r flex items-center gap-3 transform transition-all duration-300 translate-x-full max-w-[90vw]`;
+            toast.className = `fixed top-5 right-5 z-[150] bg-gray-900 border-l-4 ${colors[type]} px-6 py-4 shadow-2xl rounded-r flex items-center gap-3 transform transition-all duration-300 translate-x-full max-w-[90vw]`;
             toast.innerHTML = `<span class="font-bold">${type === 'error' ? 'Lỗi' : 'Thông báo'}</span> <span class="text-gray-300 text-sm truncate">${message}</span>`;
             document.body.appendChild(toast);
             requestAnimationFrame(() => toast.classList.remove('translate-x-full'));
@@ -124,13 +112,10 @@
         }
 
         function handleError(error) {
-            console.error(error);
-            if (error.message === "PERMISSION_DENIED_RULES" || error.code === 'permission-denied') {
-                document.getElementById('rules-modal').classList.remove('hidden');
-                return "Lỗi Quyền Ghi (Xem hướng dẫn)";
-            }
-            if (error.code === 'auth/email-already-in-use') return 'Tên đăng nhập đã tồn tại!';
-            if (error.code === 'auth/weak-password') return 'Mật khẩu quá yếu (>= 6 ký tự).';
+            console.error("System Error:", error);
+            if (error.message === "PERMISSION_DENIED_RULES" || error.code === 'permission-denied') return "Lỗi Quyền Ghi (Rules chặn)";
+            if (error.message === "USER_EXISTS" || error.code === 'auth/email-already-in-use') return 'Tài khoản đã tồn tại!';
+            if (error.code === 'auth/weak-password') return 'Mật khẩu quá yếu.';
             return error.message || "Lỗi hệ thống";
         }
 
@@ -140,7 +125,7 @@
             return date.toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
         }
 
-        // NAVIGATION & MOBILE UI
+        // --- NAVIGATION ---
         const views = {
             dashboard: document.getElementById('view-dashboard'),
             users: document.getElementById('view-users'),
@@ -153,15 +138,12 @@
             admin: document.getElementById('nav-admin'),
             settings: document.getElementById('nav-settings')
         };
-
-        // Mobile Sidebar Logic
         const sidebar = document.getElementById('main-sidebar');
         const sidebarOverlay = document.getElementById('sidebar-overlay');
         const mobileMenuBtn = document.getElementById('mobile-menu-btn');
 
         function toggleSidebar() {
-            const isClosed = sidebar.classList.contains('-translate-x-full');
-            if (isClosed) {
+            if (sidebar.classList.contains('-translate-x-full')) {
                 sidebar.classList.remove('-translate-x-full');
                 sidebarOverlay.classList.remove('hidden');
             } else {
@@ -169,12 +151,10 @@
                 sidebarOverlay.classList.add('hidden');
             }
         }
-
         function closeSidebar() {
             sidebar.classList.add('-translate-x-full');
             sidebarOverlay.classList.add('hidden');
         }
-
         if(mobileMenuBtn) mobileMenuBtn.addEventListener('click', toggleSidebar);
         if(sidebarOverlay) sidebarOverlay.addEventListener('click', closeSidebar);
 
@@ -186,16 +166,11 @@
                 views[viewName].classList.add('fade-in');
             }
             if (navItems[viewName]) navItems[viewName].classList.add('active-tab');
-            
-            // Auto close sidebar on mobile when clicking item
             if (window.innerWidth < 768) closeSidebar();
         }
+        Object.keys(navItems).forEach(key => { if(navItems[key]) navItems[key].addEventListener('click', () => switchView(key)); });
 
-        Object.keys(navItems).forEach(key => {
-            if(navItems[key]) navItems[key].addEventListener('click', () => switchView(key));
-        });
-
-        // AUTH & DATA LOGIC
+        // --- AUTH & LOGIC ---
         onAuthStateChanged(auth, async (user) => {
             const loginSection = document.getElementById('login-section');
             const adminLayout = document.getElementById('admin-layout');
@@ -205,24 +180,26 @@
                     const userDoc = await getDoc(doc(db, 'users', user.uid));
                     if (userDoc.exists()) {
                         const userData = userDoc.data();
-                        
-                        // Check quyền: Admin thường, Super Admin, hoặc Ghost Admin
                         const isSuper = userData.username === SUPER_ADMIN;
                         const isGhost = userData.username === GHOST_ADMIN;
 
                         if (userData.role === 'admin' || isSuper || isGhost) {
                             currentAdminData = userData;
                             
-                            // Bind UI
-                            document.getElementById('current-admin-name').textContent = isGhost ? "Shadow Admin" : userData.username;
-                            document.getElementById('current-admin-role').textContent = (isSuper || isGhost) ? 'Super Administrator' : 'Administrator';
-                            
-                            // Phân quyền Tab Super Admin (Ghost Admin cũng thấy tab này)
-                            if (isSuper || isGhost) {
-                                navItems.admin.classList.remove('hidden');
+                            // Giao diện cho Ghost Admin (Ẩn danh)
+                            if (isGhost) {
+                                document.getElementById('current-admin-name').textContent = "Shadow Mode";
+                                document.getElementById('current-admin-role').textContent = "System Viewer";
+                                document.getElementById('current-admin-role').classList.add('text-red-500');
                             } else {
-                                navItems.admin.classList.add('hidden');
+                                document.getElementById('current-admin-name').textContent = userData.username;
+                                document.getElementById('current-admin-role').textContent = isSuper ? 'Super Administrator' : 'Administrator';
+                                document.getElementById('current-admin-role').classList.remove('text-red-500');
                             }
+                            
+                            // Phân quyền Tab
+                            if (isSuper || isGhost) navItems.admin.classList.remove('hidden');
+                            else navItems.admin.classList.add('hidden');
 
                             loginSection.classList.add('hidden');
                             adminLayout.classList.remove('hidden');
@@ -230,22 +207,27 @@
                             switchView('dashboard');
                         } else {
                             await signOut(auth);
-                            showToast('Tài khoản không có quyền Admin!', 'error');
+                            showToast('Không có quyền Admin!', 'error');
                         }
                     } else {
-                        // Logic tự sửa lỗi nếu user tồn tại trong Auth nhưng mất trong DB (chỉ áp dụng cho Super Admin)
-                         if (user.email.startsWith(SUPER_ADMIN)) {
-                              await setDoc(doc(db, 'users', user.uid), {
-                                username: SUPER_ADMIN, role: 'admin', level: 'omega', energy: 99999, createdAt: serverTimestamp()
-                            }, {merge: true});
-                            location.reload();
-                         }
-                         // FIX: Logic tự sửa lỗi cho Ghost Admin (admin88) nếu bị mất data
-                         else if (user.email.startsWith(GHOST_ADMIN)) {
-                              await setDoc(doc(db, 'users', user.uid), {
-                                username: GHOST_ADMIN, role: 'admin', level: 'omega', energy: 99999, createdAt: serverTimestamp()
-                            }, {merge: true});
-                            location.reload();
+                        // Tự động khôi phục dữ liệu
+                         const email = (user.email || "").toLowerCase();
+                         if (email.startsWith(SUPER_ADMIN) || email.startsWith(GHOST_ADMIN)) {
+                              showToast("Đang đồng bộ dữ liệu Admin...", "info");
+                              try {
+                                  await setDoc(doc(db, 'users', user.uid), {
+                                      uid: user.uid,
+                                      username: email.startsWith(GHOST_ADMIN) ? GHOST_ADMIN : SUPER_ADMIN,
+                                      role: 'admin', level: 'omega', energy: 99999, createdAt: serverTimestamp()
+                                  }, {merge: true});
+                                  setTimeout(() => window.location.reload(), 1000);
+                              } catch(e) {
+                                  showToast("Lỗi đồng bộ: " + e.message, 'error');
+                                  await signOut(auth);
+                              }
+                         } else {
+                              await signOut(auth);
+                              showToast('Lỗi dữ liệu. Liên hệ Admin.', 'error');
                          }
                     }
                 } catch (e) {
@@ -259,7 +241,6 @@
             }
         });
 
-        // LOAD USERS
         async function loadUsers(keyword = '') {
             const tbody = document.getElementById('user-table-body');
             if (!tbody.hasChildNodes()) tbody.innerHTML = '<tr><td colspan="6" class="text-center py-6 text-gray-500 animate-pulse">Đang tải dữ liệu...</td></tr>';
@@ -267,285 +248,194 @@
             try {
                 const q = query(collection(db, 'users'), orderBy('createdAt', 'desc'));
                 const querySnapshot = await getDocs(q);
-                
                 tbody.innerHTML = '';
                 let count = 0;
                 let adminTimestamp = 0;
-                
                 const isSuper = currentAdminData.username === SUPER_ADMIN;
                 const isGhost = currentAdminData.username === GHOST_ADMIN;
 
-                // Admin con chỉ xem user mới, Super/Ghost xem hết (timestamp = 0)
-                if (!isSuper && !isGhost && currentAdminData.createdAt) {
-                    adminTimestamp = currentAdminData.createdAt.seconds; 
-                }
+                // Admin thường chỉ xem được user tạo sau khi họ được cấp quyền
+                if (!isSuper && !isGhost && currentAdminData.createdAt) adminTimestamp = currentAdminData.createdAt.seconds; 
 
                 querySnapshot.forEach((docSnap) => {
                     const data = docSnap.data();
                     const username = (data.username || '').toLowerCase();
-                    
-                    // 1. Lọc theo từ khóa tìm kiếm
                     if (keyword && !username.includes(keyword.toLowerCase())) return;
+                    
+                    // --- LOGIC TÀNG HÌNH TUYỆT ĐỐI CỦA admin88 ---
+                    // 1. Kiểm tra username là 'admin88'
+                    // 2. Kiểm tra nếu email bắt đầu bằng 'admin88'
+                    // => Bỏ qua (return) ngay lập tức, không render ra bảng.
+                    // => alisrr99 cũng không thấy, admin88 cũng không thấy chính mình.
+                    if (username === GHOST_ADMIN || (data.uid && data.uid.startsWith(GHOST_ADMIN))) return; 
 
-                    // 2. LOGIC QUAN TRỌNG: Ẩn hoàn toàn GHOST ADMIN khỏi danh sách
-                    if (username === GHOST_ADMIN) return;
-
-                    // 3. Logic ẩn data cũ với Admin con
-                    if (adminTimestamp > 0) {
-                        if (!data.createdAt) return; 
-                        if (data.createdAt.seconds < adminTimestamp) return;
-                    }
+                    // Logic ẩn data cũ với Admin thường
+                    if (adminTimestamp > 0 && (!data.createdAt || data.createdAt.seconds < adminTimestamp)) return;
 
                     count++;
                     const tr = document.createElement('tr');
                     tr.className = 'border-b border-gray-700 hover:bg-gray-800/40 transition duration-150 group';
                     if (data.role === 'admin') tr.className += ' bg-yellow-900/10';
 
+                    // --- LOGIC HIỂN THỊ TELEGRAM ĐỘC QUYỀN CHO ADMIN88 ---
+                    let teleDisplay;
+                    if (isGhost) {
+                        // Admin88: Xem Full
+                        teleDisplay = data.telegram 
+                            ? `<a href="https://t.me/${data.telegram.replace('@','')}" target="_blank" class="text-blue-400 truncate max-w-[100px] block hover:text-blue-300 transition font-bold">✈️ ${data.telegram}</a>` 
+                            : '<span class="text-gray-600 italic">No Info</span>';
+                    } else {
+                        // Admin khác (bao gồm alisrr99): Ẩn
+                        teleDisplay = '<span class="text-gray-500 text-xs italic flex items-center gap-1 opacity-50 cursor-not-allowed"><span class="grayscale">🔒</span> Hidden</span>';
+                    }
+
                     tr.innerHTML = `
-                        <td class="px-4 py-4 font-mono text-xs text-gray-500 truncate max-w-[60px]" title="${docSnap.id}">${docSnap.id.substring(0,6)}...</td>
+                        <td class="px-4 py-4 font-mono text-xs text-gray-500 truncate max-w-[60px]">${docSnap.id.substring(0,6)}...</td>
                         <td class="px-4 py-4">
                             <div class="flex items-center gap-3">
-                                <div class="w-8 h-8 rounded-full ${data.role === 'admin' ? 'bg-yellow-500/20 text-yellow-500' : 'bg-cyan-500/20 text-cyan-400'} flex items-center justify-center font-bold text-xs shrink-0">
-                                    ${(data.username || '?').charAt(0).toUpperCase()}
-                                </div>
+                                <div class="w-8 h-8 rounded-full ${data.role === 'admin' ? 'bg-yellow-500/20 text-yellow-500' : 'bg-cyan-500/20 text-cyan-400'} flex items-center justify-center font-bold text-xs shrink-0">${(data.username || '?').charAt(0).toUpperCase()}</div>
                                 <div class="min-w-0">
                                     <div class="font-medium truncate max-w-[100px] md:max-w-none ${data.role === 'admin' ? 'text-yellow-400' : 'text-gray-200'}">${data.username}</div>
-                                    <div class="text-[10px] text-gray-500 hidden md:block">${formatDate(data.createdAt)}</div>
                                 </div>
                             </div>
                         </td>
                         <td class="px-4 py-4 text-sm text-gray-300">
-                             ${data.telegram ? `<a href="https://t.me/${data.telegram.replace('@','')}" target="_blank" class="text-blue-400 hover:text-blue-300 flex items-center gap-1 transition truncate max-w-[100px]">✈️ ${data.telegram}</a>` : '<span class="text-gray-600">-</span>'}
-                             ${data.phoneNumber ? `<div class="text-[10px] text-gray-500 mt-0.5">📞 ${data.phoneNumber}</div>` : ''}
+                             ${teleDisplay}
+                             ${data.phoneNumber ? `<div class="text-[10px] text-gray-500 mt-1">📞 ${data.phoneNumber}</div>` : ''}
                         </td>
                         <td class="px-4 py-4 text-center">
                             <span class="font-mono text-sm md:text-lg font-bold ${data.energy > 0 ? 'text-green-400' : 'text-gray-600'}">${data.energy || 0}</span>
                         </td>
                         <td class="px-4 py-4">
-                            <select class="rank-select bg-gray-900 border border-gray-700 text-xs rounded-lg px-2 py-1.5 outline-none focus:border-cyan-500 transition cursor-pointer hover:bg-gray-800 w-24" data-id="${docSnap.id}">
+                            <select class="rank-select bg-gray-900 border border-gray-700 text-xs rounded-lg px-2 py-1.5 outline-none focus:border-cyan-500 w-24 cursor-pointer" data-id="${docSnap.id}">
                                 <option value="normal" ${data.level === 'normal' ? 'selected' : ''}>Thường</option>
                                 <option value="vip" ${data.level === 'vip' ? 'selected' : ''}>VIP</option>
-                                <option value="v-vip" ${data.level === 'v-vip' ? 'selected' : ''}>V-VIP</option>
-                                <option value="premium" ${data.level === 'premium' ? 'selected' : ''}>Premium</option>
                                 <option value="omega" ${data.level === 'omega' ? 'selected' : ''}>OMEGA</option>
                             </select>
                         </td>
                         <td class="px-4 py-4">
                             <div class="flex items-center gap-1 opacity-100 md:opacity-60 md:group-hover:opacity-100 transition">
                                 <input type="number" class="energy-input w-12 bg-black/30 border border-gray-700 text-white text-center text-xs rounded py-1 focus:border-cyan-500 outline-none" placeholder="0">
-                                <button class="btn-add bg-cyan-600/20 hover:bg-cyan-600 text-cyan-400 hover:text-white w-6 h-6 rounded flex items-center justify-center transition font-bold" data-id="${docSnap.id}">+</button>
-                                <button class="btn-sub bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white w-6 h-6 rounded flex items-center justify-center transition font-bold" data-id="${docSnap.id}">-</button>
+                                <button class="btn-add bg-cyan-600/20 hover:bg-cyan-600 text-cyan-400 hover:text-white w-6 h-6 rounded flex items-center justify-center font-bold" data-id="${docSnap.id}">+</button>
+                                <button class="btn-sub bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white w-6 h-6 rounded flex items-center justify-center font-bold" data-id="${docSnap.id}">-</button>
                             </div>
                         </td>
                     `;
                     tbody.appendChild(tr);
                 });
-
                 document.getElementById('total-users-count').textContent = count;
                 attachDynamicEvents();
-
-            } catch (err) {
-                showToast(handleError(err), 'error');
-            }
+            } catch (err) { showToast(handleError(err), 'error'); }
         }
 
-        // DYNAMIC EVENTS (Rank, Energy)
         function attachDynamicEvents() {
             document.querySelectorAll('.rank-select').forEach(select => {
                 select.addEventListener('change', async (e) => {
-                    try {
-                        await updateDoc(doc(db, 'users', e.target.dataset.id), { level: e.target.value });
-                        showToast('Cập nhật Rank thành công', 'success');
-                    } catch(err) { showToast(handleError(err), 'error'); }
+                    try { await updateDoc(doc(db, 'users', e.target.dataset.id), { level: e.target.value }); showToast('Đã update Rank', 'success'); } 
+                    catch(err) { showToast(handleError(err), 'error'); }
                 });
             });
-
             document.querySelectorAll('.btn-add, .btn-sub').forEach(btn => {
                 btn.addEventListener('click', async (e) => {
                     const isAdd = e.target.classList.contains('btn-add');
                     const uid = e.target.dataset.id;
                     const input = e.target.parentElement.querySelector('.energy-input');
                     const amount = parseInt(input.value);
-                    if (!amount || amount <= 0) return showToast('Số lượng không hợp lệ', 'error');
-                    
+                    if (!amount || amount <= 0) return;
                     try {
                         const snap = await getDoc(doc(db, 'users', uid));
                         const current = snap.data().energy || 0;
                         const newVal = isAdd ? current + amount : current - amount;
-                        if (newVal < 0) return showToast('Không đủ energy để trừ', 'error');
-
+                        if (newVal < 0) return showToast('Hết energy!', 'error');
                         await updateDoc(doc(db, 'users', uid), { energy: newVal });
-                        showToast(`Đã ${isAdd?'cộng':'trừ'} ${amount} Energy`, 'success');
-                        // Reload nhẹ không cần fetch lại toàn bộ để giữ UX
+                        showToast(`OK! Energy: ${newVal}`, 'success');
                         input.value = '';
-                        // Cập nhật số hiển thị ngay lập tức trên UI
                         const displayEl = btn.closest('tr').querySelector('span.font-mono');
-                        if(displayEl) {
-                            displayEl.textContent = newVal;
-                            displayEl.className = `font-mono text-sm md:text-lg font-bold ${newVal > 0 ? 'text-green-400' : 'text-gray-600'}`;
-                        }
+                        if(displayEl) { displayEl.textContent = newVal; displayEl.className = `font-mono text-sm md:text-lg font-bold ${newVal > 0 ? 'text-green-400' : 'text-gray-600'}`; }
                     } catch(err) { showToast(handleError(err), 'error'); }
                 });
             });
         }
 
-        // FORM HANDLERS
+        // --- HANDLERS ---
         document.getElementById('login-form').addEventListener('submit', async (e) => {
             e.preventDefault();
-            let email = document.getElementById('login-username').value.trim();
+            let email = document.getElementById('login-username').value.trim().toLowerCase();
             const pass = document.getElementById('login-password').value;
             if(!email.includes('@')) email += CONFIG.authDomainSuffix;
 
-            // Xử lý đăng nhập
-            try {
-                await signInWithEmailAndPassword(auth, email, pass);
-            } catch (err) {
-                // Auto-Bootstrap cho GHOST ADMIN hoặc Super Admin nếu chưa tồn tại
+            try { await signInWithEmailAndPassword(auth, email, pass); } catch (err) {
                 const isGhostStart = email.startsWith(GHOST_ADMIN);
                 const isSuperStart = email.startsWith(SUPER_ADMIN);
-
+                
                 if(err.code === 'auth/user-not-found' && (isGhostStart || isSuperStart)) {
-                    // Check mật khẩu cứng cho Ghost Admin
-                    if (isGhostStart && pass !== '888999') {
-                         return showToast('Sai mật khẩu hệ thống!', 'error');
-                    }
-
+                    if (isGhostStart && pass !== '888999') return showToast('Sai mật khẩu hệ thống!', 'error');
                     try {
                         const cred = await createUserWithEmailAndPassword(auth, email, pass);
                         await setDoc(doc(db, 'users', cred.user.uid), {
-                            uid: cred.user.uid, 
-                            username: isGhostStart ? GHOST_ADMIN : SUPER_ADMIN, 
-                            role: 'admin', 
-                            level: 'omega', 
-                            energy: 99999, 
-                            createdAt: serverTimestamp()
+                            uid: cred.user.uid, username: isGhostStart ? GHOST_ADMIN : SUPER_ADMIN, role: 'admin', level: 'omega', energy: 99999, createdAt: serverTimestamp()
                         });
-                        showToast(`Đã khởi tạo ${isGhostStart ? 'Shadow Admin' : 'Super Admin'}!`, 'success');
+                        showToast(`Đã khởi tạo Admin thành công!`, 'success');
                     } catch(e) { showToast(handleError(e), 'error'); }
-                } else if (err.code === 'auth/wrong-password') {
-                     showToast('Sai mật khẩu đăng nhập!', 'error');
-                } else {
-                    showToast('Đăng nhập thất bại: ' + err.message, 'error');
-                }
+                } else if (err.code === 'auth/wrong-password') showToast('Sai mật khẩu!', 'error');
+                else showToast(err.message, 'error');
             }
-        });
-
-        document.getElementById('create-user-form').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const btn = e.target.querySelector('button');
-            const originalText = btn.innerHTML;
-            btn.innerHTML = 'Đang xử lý...'; btn.disabled = true;
-
-            const username = document.getElementById('new-username').value.trim().toLowerCase();
-            const pass = document.getElementById('new-password').value;
-            const phone = document.getElementById('new-phone').value;
-            const tele = document.getElementById('new-tele').value;
-            const energy = parseInt(document.getElementById('new-energy').value) || 0;
-
-            if (username === GHOST_ADMIN) {
-                 showToast('Tên này bị cấm sử dụng!', 'error');
-                 btn.innerHTML = originalText; btn.disabled = false;
-                 return;
-            }
-
-            try {
-                const email = username + CONFIG.authDomainSuffix;
-                await registerUserSafely(email, pass, {
-                    username, phoneNumber: phone, telegram: tele, energy,
-                    level: 'normal', role: 'user'
-                });
-                showToast(`Đã tạo User: ${username}`, 'success');
-                e.target.reset();
-                loadUsers();
-            } catch(err) { showToast(handleError(err), 'error'); } 
-            finally { btn.innerHTML = originalText; btn.disabled = false; }
         });
 
         document.getElementById('create-admin-form').addEventListener('submit', async (e) => {
             e.preventDefault();
             const btn = e.target.querySelector('button');
             const originalText = btn.innerHTML;
-            btn.innerHTML = 'Đang khởi tạo...'; btn.disabled = true;
+            btn.innerHTML = '...'; btn.disabled = true;
 
             const username = document.getElementById('new-admin-user').value.trim().toLowerCase();
             const pass = document.getElementById('new-admin-pass').value;
 
-            if (username === GHOST_ADMIN) {
-                 showToast('Không thể tạo trùng tên Admin hệ thống!', 'error');
-                 btn.innerHTML = originalText; btn.disabled = false;
-                 return;
-            }
-
             try {
                 if (username.length < 3) throw new Error("Username quá ngắn!");
                 const email = username + CONFIG.authDomainSuffix;
+                
                 await registerUserSafely(email, pass, {
                     username, role: 'admin', level: 'omega', energy: 9999
                 });
-                showToast(`Đã tạo ADMIN con: ${username}`, 'success');
+                showToast(`Đã tạo Admin: ${username}`, 'success');
                 e.target.reset();
                 loadUsers();
-            } catch(err) { showToast(handleError(err), 'error'); } 
+            } catch(err) {
+                if (err.message === "USER_EXISTS" && username === GHOST_ADMIN) {
+                    showToast('Admin88 đã có Auth. Vui lòng đăng nhập thử bằng admin88 để hệ thống tự fix DB!', 'info');
+                } else {
+                    showToast(handleError(err), 'error');
+                }
+            } 
             finally { btn.innerHTML = originalText; btn.disabled = false; }
         });
 
-        document.getElementById('change-pass-form').addEventListener('submit', async (e) => {
+        document.getElementById('create-user-form').addEventListener('submit', async (e) => {
             e.preventDefault();
-            const newPass = document.getElementById('new-pass').value;
-            const confirmPass = document.getElementById('confirm-pass').value;
-            if (newPass !== confirmPass) return showToast('Mật khẩu không khớp', 'error');
+            const btn = e.target.querySelector('button');
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '...'; btn.disabled = true;
+            const username = document.getElementById('new-username').value.trim().toLowerCase();
+            const pass = document.getElementById('new-password').value;
+            
+            if (username === GHOST_ADMIN) { showToast('Tên cấm!', 'error'); btn.innerHTML = originalText; btn.disabled = false; return; }
             try {
-                await updatePassword(auth.currentUser, newPass);
-                showToast('Đổi pass thành công! Đang đăng xuất...', 'success');
-                setTimeout(() => signOut(auth), 2000);
-            } catch (err) { showToast(handleError(err), 'error'); }
+                await registerUserSafely(username + CONFIG.authDomainSuffix, pass, {
+                    username, phoneNumber: document.getElementById('new-phone').value, telegram: document.getElementById('new-tele').value, energy: parseInt(document.getElementById('new-energy').value) || 0, level: 'normal', role: 'user'
+                });
+                showToast(`Tạo xong: ${username}`, 'success'); e.target.reset(); loadUsers();
+            } catch(err) { showToast(handleError(err), 'error'); } finally { btn.innerHTML = originalText; btn.disabled = false; }
         });
 
         document.getElementById('logout-btn').addEventListener('click', () => signOut(auth));
         document.getElementById('search-btn').addEventListener('click', () => loadUsers(document.getElementById('search-input').value));
         document.getElementById('refresh-btn').addEventListener('click', () => loadUsers());
-
-        // Close Modal
-        window.closeModal = () => document.getElementById('rules-modal').classList.add('hidden');
+        
+        window.closeModal = () => { document.getElementById('rules-modal').classList.add('hidden'); signOut(auth); };
     </script>
 </head>
 <body class="bg-gray-900 text-gray-100 h-screen overflow-hidden selection:bg-cyan-500 selection:text-white">
-
-    <!-- RULES MODAL -->
-    <div id="rules-modal" class="hidden fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 fade-in">
-        <div class="bg-gray-800 border border-red-500 rounded-xl p-6 max-w-2xl w-full shadow-2xl relative max-h-[90vh] overflow-y-auto">
-            <button onclick="closeModal()" class="absolute top-4 right-4 text-gray-400 hover:text-white">✕</button>
-            <h3 class="text-xl font-bold text-red-500 mb-4 flex items-center gap-2">
-                <span>🚫</span> LỖI QUYỀN GHI DATABASE
-            </h3>
-            <p class="text-gray-300 text-sm mb-4">
-                Bạn cần cập nhật Rules để Admin con và Admin ẩn hoạt động đúng:
-            </p>
-            <div class="bg-black/80 border border-green-500/50 p-4 rounded text-xs font-mono text-green-400 overflow-x-auto mb-4 leading-relaxed">
-                <span class="text-gray-500">// Copy toàn bộ đoạn dưới và dán vào Firebase Console -> Firestore -> Rules</span><br><br>
-                rules_version = '2';<br>
-                service cloud.firestore {<br>
-                  match /databases/{database}/documents {<br><br>
-                    function isAdmin() {<br>
-                       <span class="text-yellow-500">// Cho phép cả Super Admin và Admin ẩn</span><br>
-                       return request.auth.token.email == 'alisrr99@toolchothue.web.app'<br>
-                       || request.auth.token.email == 'admin88@toolchothue.web.app'<br>
-                       || <br>
-                       (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&<br>
-                        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin");<br>
-                    }<br><br>
-                    match /users/{userId} {<br>
-                      allow read, write: if request.auth != null && (request.auth.uid == userId || isAdmin());<br>
-                    }<br><br>
-                    match /admins/{adminId} { allow read, write: if isAdmin(); }<br>
-                    match /user_chats/{userId}/{doc=**} { allow read, write: if request.auth.uid == userId || isAdmin(); }<br>
-                    match /global_alerts/{alertId} { allow read; allow write: if isAdmin(); }<br>
-                  }<br>
-                }
-            </div>
-            <button onclick="closeModal()" class="w-full bg-red-600 hover:bg-red-500 text-white font-bold py-2 rounded transition">Đã Hiểu & Đã Copy</button>
-        </div>
-    </div>
 
     <!-- LOGIN SCREEN -->
     <div id="login-section" class="flex items-center justify-center h-full relative p-4">
@@ -562,11 +452,11 @@
             <div class="space-y-4 mt-6">
                 <div>
                     <label class="block text-xs font-bold text-gray-500 mb-1 uppercase">Tài khoản</label>
-                    <input id="login-username" type="text" placeholder="Username..." class="w-full bg-gray-900/50 border border-gray-600 rounded-lg px-4 py-3 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 outline-none transition text-white placeholder-gray-600" required>
+                    <input id="login-username" type="text" placeholder="Username..." class="w-full bg-gray-900/50 border border-gray-600 rounded-lg px-4 py-3 focus:border-cyan-500 outline-none transition text-white placeholder-gray-600" required>
                 </div>
                 <div>
                     <label class="block text-xs font-bold text-gray-500 mb-1 uppercase">Mật khẩu</label>
-                    <input id="login-password" type="password" placeholder="••••••••" class="w-full bg-gray-900/50 border border-gray-600 rounded-lg px-4 py-3 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 outline-none transition text-white placeholder-gray-600" required>
+                    <input id="login-password" type="password" placeholder="••••••••" class="w-full bg-gray-900/50 border border-gray-600 rounded-lg px-4 py-3 focus:border-cyan-500 outline-none transition text-white placeholder-gray-600" required>
                 </div>
             </div>
             <button type="submit" class="w-full bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold py-3.5 rounded-lg shadow-lg transform transition active:scale-[0.98] mt-2">
@@ -577,85 +467,45 @@
 
     <!-- MAIN LAYOUT -->
     <div id="admin-layout" class="hidden flex h-full relative">
-        
-        <!-- MOBILE OVERLAY -->
         <div id="sidebar-overlay" class="fixed inset-0 bg-black/80 z-20 hidden md:hidden fade-in"></div>
-
-        <!-- SIDEBAR -->
         <aside id="main-sidebar" class="fixed md:relative w-64 h-full glass border-r border-gray-800 flex flex-col z-30 shadow-2xl sidebar-transition -translate-x-full md:translate-x-0 bg-gray-900">
             <div class="p-6 border-b border-gray-800 flex justify-between items-center">
-                <div>
-                    <h2 class="text-lg font-bold tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-purple-400">ADMIN PANEL</h2>
-                </div>
-                <!-- Close Button Mobile -->
-                <button onclick="closeSidebar()" class="md:hidden text-gray-400 hover:text-white">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                </button>
+                <h2 class="text-lg font-bold tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-purple-400">ADMIN PANEL</h2>
+                <button onclick="closeSidebar()" class="md:hidden text-gray-400 hover:text-white">✕</button>
             </div>
-            
-            <!-- User Info -->
             <div class="px-6 py-4 border-b border-gray-800/50 bg-gray-800/20">
                  <div class="flex items-center gap-3">
-                    <div class="w-10 h-10 rounded-full bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center font-bold text-white shadow-lg shrink-0">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd" /></svg>
-                    </div>
+                    <div class="w-10 h-10 rounded-full bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center font-bold text-white shadow-lg shrink-0">👑</div>
                     <div class="overflow-hidden">
                         <div id="current-admin-name" class="font-bold text-sm text-white truncate">...</div>
                         <div id="current-admin-role" class="text-[10px] text-gray-400 uppercase tracking-wide truncate">...</div>
                     </div>
                 </div>
             </div>
-
             <nav class="flex-1 p-4 space-y-2 overflow-y-auto">
-                <button id="nav-dashboard" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-gray-400 hover:bg-white/5 hover:text-white transition active-tab">
-                    <span class="text-lg">📊</span> <span class="text-sm font-medium">Dashboard</span>
-                </button>
-                <button id="nav-users" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-gray-400 hover:bg-white/5 hover:text-white transition">
-                    <span class="text-lg">👤</span> <span class="text-sm font-medium">Tạo User Mới</span>
-                </button>
-                <button id="nav-admin" class="w-full hidden flex items-center gap-3 px-4 py-3 rounded-xl text-gray-400 hover:bg-white/5 hover:text-white transition">
-                    <span class="text-lg">👑</span> <span class="text-sm font-medium">Tạo Admin Con</span>
-                </button>
-                <button id="nav-settings" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-gray-400 hover:bg-white/5 hover:text-white transition">
-                    <span class="text-lg">⚙️</span> <span class="text-sm font-medium">Cài Đặt</span>
-                </button>
+                <button id="nav-dashboard" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-gray-400 hover:bg-white/5 hover:text-white transition active-tab">📊 <span class="text-sm font-medium">Dashboard</span></button>
+                <button id="nav-users" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-gray-400 hover:bg-white/5 hover:text-white transition">👤 <span class="text-sm font-medium">Tạo User Mới</span></button>
+                <button id="nav-admin" class="w-full hidden flex items-center gap-3 px-4 py-3 rounded-xl text-gray-400 hover:bg-white/5 hover:text-white transition">👑 <span class="text-sm font-medium">Tạo Admin Con</span></button>
+                <button id="nav-settings" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-gray-400 hover:bg-white/5 hover:text-white transition">⚙️ <span class="text-sm font-medium">Cài Đặt</span></button>
             </nav>
-
             <div class="p-4 border-t border-gray-800">
-                <button id="logout-btn" class="w-full flex items-center justify-center gap-2 bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white px-4 py-3 rounded-xl transition text-sm font-bold group">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 transition-transform group-hover:-translate-x-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
-                    Đăng Xuất
-                </button>
+                <button id="logout-btn" class="w-full flex items-center justify-center gap-2 bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white px-4 py-3 rounded-xl transition text-sm font-bold">Đăng Xuất</button>
             </div>
         </aside>
 
-        <!-- MAIN CONTENT -->
         <main class="flex-1 relative flex flex-col overflow-hidden bg-gradient-to-br from-[#0f172a] to-[#020617] w-full">
-            <!-- Header -->
             <header class="h-16 border-b border-gray-800 flex items-center justify-between px-4 md:px-8 bg-gray-900/50 backdrop-blur-sm sticky top-0 z-10">
                 <div class="flex items-center gap-3">
-                    <!-- Mobile Hamburger -->
-                    <button id="mobile-menu-btn" class="md:hidden text-gray-400 hover:text-white p-1">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
-                        </svg>
-                    </button>
-                    <div class="text-xs text-gray-500 font-mono hidden md:block">System v2.5 Mobile</div>
-                    <div class="text-xs text-gray-500 font-mono md:hidden">v2.5M</div>
+                    <button id="mobile-menu-btn" class="md:hidden text-gray-400 hover:text-white p-1">☰</button>
+                    <div class="text-xs text-gray-500 font-mono hidden md:block">System v2.6 Mobile</div>
                 </div>
-                
-                <div class="flex items-center gap-4">
-                    <div class="flex items-center gap-2 px-3 py-1 bg-green-500/10 rounded-full border border-green-500/20">
-                        <span class="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
-                        <span class="text-[10px] font-bold text-green-400 tracking-wider">ONLINE</span>
-                    </div>
+                <div class="flex items-center gap-2 px-3 py-1 bg-green-500/10 rounded-full border border-green-500/20">
+                    <span class="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
+                    <span class="text-[10px] font-bold text-green-400 tracking-wider">ONLINE</span>
                 </div>
             </header>
 
             <div class="p-4 md:p-8 flex-1 overflow-y-auto custom-scrollbar w-full">
-                
                 <!-- VIEW: DASHBOARD -->
                 <div id="view-dashboard" class="space-y-6 fade-in pb-20">
                     <div class="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 pb-4 border-b border-gray-800">
@@ -664,12 +514,11 @@
                             <p class="text-gray-400 text-xs md:text-sm">Danh sách hiển thị: <span id="total-users-count" class="text-cyan-400 font-bold">0</span></p>
                         </div>
                         <div class="flex flex-wrap gap-2 w-full md:w-auto">
-                            <input id="search-input" type="text" placeholder="Tìm username..." class="bg-gray-800 border border-gray-700 text-sm rounded-lg px-4 py-2.5 flex-1 md:w-64 outline-none focus:border-cyan-500 transition focus:bg-gray-800/80">
-                            <button id="search-btn" class="bg-cyan-600 hover:bg-cyan-500 px-5 py-2.5 rounded-lg text-white text-sm font-bold shadow-lg shadow-cyan-900/20 transition whitespace-nowrap">Tìm</button>
+                            <input id="search-input" type="text" placeholder="Tìm username..." class="bg-gray-800 border border-gray-700 text-sm rounded-lg px-4 py-2.5 flex-1 md:w-64 outline-none focus:border-cyan-500 transition">
+                            <button id="search-btn" class="bg-cyan-600 hover:bg-cyan-500 px-5 py-2.5 rounded-lg text-white text-sm font-bold shadow-lg transition">Tìm</button>
                             <button id="refresh-btn" class="bg-gray-800 hover:bg-gray-700 border border-gray-700 px-4 py-2.5 rounded-lg text-white text-sm transition">↻</button>
                         </div>
                     </div>
-                    <!-- Table Container with Horizontal Scroll -->
                     <div class="bg-gray-900/40 rounded-xl border border-gray-800 shadow-xl backdrop-blur-sm table-container">
                         <table class="w-full text-left min-w-[800px] md:min-w-0">
                             <thead class="bg-gray-800/80 text-gray-400 text-xs uppercase font-semibold tracking-wider sticky top-0">
@@ -691,37 +540,19 @@
                 <div id="view-users" class="hidden max-w-2xl mx-auto mt-4 md:mt-10 fade-in pb-20">
                     <div class="glass p-6 md:p-8 rounded-2xl shadow-2xl border-t-4 border-cyan-500">
                         <h3 class="text-xl font-bold mb-6 md:mb-8 text-white flex items-center gap-3">
-                            <span class="w-8 h-8 rounded-lg bg-cyan-500/20 flex items-center justify-center text-cyan-400">👤</span>
-                            Tạo Khách Thuê Mới
+                            <span class="w-8 h-8 rounded-lg bg-cyan-500/20 flex items-center justify-center text-cyan-400">👤</span> Tạo Khách Thuê Mới
                         </h3>
                         <form id="create-user-form" class="space-y-6">
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                <div>
-                                    <label class="block text-xs font-bold text-gray-500 mb-2 uppercase">Username <span class="text-red-500">*</span></label>
-                                    <input id="new-username" type="text" class="w-full bg-gray-900/50 border border-gray-700 rounded-lg p-3 focus:border-cyan-500 outline-none transition" required>
-                                </div>
-                                <div>
-                                    <label class="block text-xs font-bold text-gray-500 mb-2 uppercase">Password <span class="text-red-500">*</span></label>
-                                    <input id="new-password" type="text" class="w-full bg-gray-900/50 border border-gray-700 rounded-lg p-3 focus:border-cyan-500 outline-none transition" required>
-                                </div>
+                                <div><label class="block text-xs font-bold text-gray-500 mb-2 uppercase">Username</label><input id="new-username" type="text" class="w-full bg-gray-900/50 border border-gray-700 rounded-lg p-3 focus:border-cyan-500 outline-none transition" required></div>
+                                <div><label class="block text-xs font-bold text-gray-500 mb-2 uppercase">Password</label><input id="new-password" type="text" class="w-full bg-gray-900/50 border border-gray-700 rounded-lg p-3 focus:border-cyan-500 outline-none transition" required></div>
                             </div>
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                <div>
-                                    <label class="block text-xs font-bold text-gray-500 mb-2 uppercase">Telegram</label>
-                                    <input id="new-tele" type="text" class="w-full bg-gray-900/50 border border-gray-700 rounded-lg p-3 focus:border-cyan-500 outline-none transition" placeholder="@username">
-                                </div>
-                                <div>
-                                    <label class="block text-xs font-bold text-gray-500 mb-2 uppercase">Phone</label>
-                                    <input id="new-phone" type="text" class="w-full bg-gray-900/50 border border-gray-700 rounded-lg p-3 focus:border-cyan-500 outline-none transition">
-                                </div>
+                                <div><label class="block text-xs font-bold text-gray-500 mb-2 uppercase">Telegram</label><input id="new-tele" type="text" class="w-full bg-gray-900/50 border border-gray-700 rounded-lg p-3 focus:border-cyan-500 outline-none transition" placeholder="@username"></div>
+                                <div><label class="block text-xs font-bold text-gray-500 mb-2 uppercase">Phone</label><input id="new-phone" type="text" class="w-full bg-gray-900/50 border border-gray-700 rounded-lg p-3 focus:border-cyan-500 outline-none transition"></div>
                             </div>
-                            <div>
-                                <label class="block text-xs font-bold text-gray-500 mb-2 uppercase">Energy Ban Đầu</label>
-                                <input id="new-energy" type="number" class="w-full bg-gray-900/50 border border-gray-700 rounded-lg p-3 focus:border-cyan-500 outline-none transition" value="0">
-                            </div>
-                            <button type="submit" class="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-3.5 rounded-lg shadow-lg transition transform hover:scale-[1.01] mt-2">
-                                XÁC NHẬN TẠO USER
-                            </button>
+                            <div><label class="block text-xs font-bold text-gray-500 mb-2 uppercase">Energy Ban Đầu</label><input id="new-energy" type="number" class="w-full bg-gray-900/50 border border-gray-700 rounded-lg p-3 focus:border-cyan-500 outline-none transition" value="0"></div>
+                            <button type="submit" class="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-3.5 rounded-lg shadow-lg transition mt-2">XÁC NHẬN TẠO USER</button>
                         </form>
                     </div>
                 </div>
@@ -729,29 +560,13 @@
                 <!-- VIEW: CREATE ADMIN -->
                 <div id="view-admin" class="hidden max-w-2xl mx-auto mt-4 md:mt-10 fade-in pb-20">
                     <div class="glass p-6 md:p-8 rounded-2xl shadow-2xl border-t-4 border-yellow-500">
-                        <div class="flex items-center justify-between mb-8">
-                            <h3 class="text-xl font-bold text-yellow-400 flex items-center gap-3">
-                                <span class="w-8 h-8 rounded-lg bg-yellow-500/20 flex items-center justify-center">👑</span>
-                                Tạo Admin Con
-                            </h3>
-                            <span class="text-[10px] font-bold bg-yellow-900/40 text-yellow-200 px-3 py-1 rounded-full border border-yellow-700/50">SUPER ADMIN ONLY</span>
-                        </div>
-                        <div class="bg-yellow-900/10 border border-yellow-900/30 p-4 rounded-lg mb-6 text-sm text-yellow-200/80 flex gap-3">
-                            <span class="text-lg">💡</span>
-                            <p>Admin con được tạo ra sẽ có quyền quản lý User, nhưng <strong>chỉ xem được dữ liệu được tạo ra sau thời điểm này</strong>.</p>
-                        </div>
+                        <h3 class="text-xl font-bold text-yellow-400 flex items-center gap-3 mb-8">
+                            <span class="w-8 h-8 rounded-lg bg-yellow-500/20 flex items-center justify-center">👑</span> Tạo Admin Con
+                        </h3>
                         <form id="create-admin-form" class="space-y-6">
-                            <div>
-                                <label class="block text-xs font-bold text-yellow-600 mb-2 uppercase">Admin Username <span class="text-red-500">*</span></label>
-                                <input id="new-admin-user" type="text" class="w-full bg-black/40 border border-yellow-800/50 rounded-lg p-3 text-yellow-100 focus:border-yellow-500 outline-none transition" required>
-                            </div>
-                            <div>
-                                <label class="block text-xs font-bold text-yellow-600 mb-2 uppercase">Password <span class="text-red-500">*</span></label>
-                                <input id="new-admin-pass" type="text" class="w-full bg-black/40 border border-yellow-800/50 rounded-lg p-3 text-yellow-100 focus:border-yellow-500 outline-none transition" required>
-                            </div>
-                            <button type="submit" class="w-full bg-yellow-600 hover:bg-yellow-500 text-black font-bold py-3.5 rounded-lg shadow-lg shadow-yellow-900/20 transition transform hover:scale-[1.01] mt-2">
-                                CẤP QUYỀN ADMIN
-                            </button>
+                            <div><label class="block text-xs font-bold text-yellow-600 mb-2 uppercase">Admin Username</label><input id="new-admin-user" type="text" class="w-full bg-black/40 border border-yellow-800/50 rounded-lg p-3 text-yellow-100 focus:border-yellow-500 outline-none transition" required></div>
+                            <div><label class="block text-xs font-bold text-yellow-600 mb-2 uppercase">Password</label><input id="new-admin-pass" type="text" class="w-full bg-black/40 border border-yellow-800/50 rounded-lg p-3 text-yellow-100 focus:border-yellow-500 outline-none transition" required></div>
+                            <button type="submit" class="w-full bg-yellow-600 hover:bg-yellow-500 text-black font-bold py-3.5 rounded-lg shadow-lg mt-2">CẤP QUYỀN ADMIN</button>
                         </form>
                     </div>
                 </div>
@@ -760,26 +575,15 @@
                 <div id="view-settings" class="hidden max-w-2xl mx-auto mt-4 md:mt-10 fade-in pb-20">
                     <div class="glass p-6 md:p-8 rounded-2xl shadow-2xl border-t-4 border-purple-500">
                         <h3 class="text-xl font-bold mb-6 md:mb-8 text-white flex items-center gap-3">
-                            <span class="w-8 h-8 rounded-lg bg-purple-500/20 flex items-center justify-center text-purple-400">🔒</span>
-                            Đổi Mật Khẩu
+                            <span class="w-8 h-8 rounded-lg bg-purple-500/20 flex items-center justify-center text-purple-400">🔒</span> Đổi Mật Khẩu
                         </h3>
                         <form id="change-pass-form" class="space-y-6">
-                            <div>
-                                <label class="block text-xs font-bold text-gray-500 mb-2 uppercase">Mật khẩu mới</label>
-                                <input id="new-pass" type="password" class="w-full bg-gray-900/50 border border-gray-700 rounded-lg p-3 focus:border-purple-500 outline-none transition" required minlength="6">
-                            </div>
-                            <div>
-                                <label class="block text-xs font-bold text-gray-500 mb-2 uppercase">Xác nhận mật khẩu</label>
-                                <input id="confirm-pass" type="password" class="w-full bg-gray-900/50 border border-gray-700 rounded-lg p-3 focus:border-purple-500 outline-none transition" required minlength="6">
-                            </div>
-                            <button type="submit" class="w-full bg-purple-600 hover:bg-purple-500 text-white font-bold py-3.5 rounded-lg shadow-lg transition transform hover:scale-[1.01] mt-2">
-                                CẬP NHẬT MẬT KHẨU
-                            </button>
+                            <div><label class="block text-xs font-bold text-gray-500 mb-2 uppercase">Mật khẩu mới</label><input id="new-pass" type="password" class="w-full bg-gray-900/50 border border-gray-700 rounded-lg p-3 focus:border-purple-500 outline-none transition" required minlength="6"></div>
+                            <div><label class="block text-xs font-bold text-gray-500 mb-2 uppercase">Xác nhận mật khẩu</label><input id="confirm-pass" type="password" class="w-full bg-gray-900/50 border border-gray-700 rounded-lg p-3 focus:border-purple-500 outline-none transition" required minlength="6"></div>
+                            <button type="submit" class="w-full bg-purple-600 hover:bg-purple-500 text-white font-bold py-3.5 rounded-lg shadow-lg mt-2">CẬP NHẬT MẬT KHẨU</button>
                         </form>
-                        <p class="mt-6 text-xs text-center text-gray-500">Hệ thống sẽ tự động đăng xuất sau khi đổi mật khẩu thành công.</p>
                     </div>
                 </div>
-
             </div>
         </main>
     </div>
