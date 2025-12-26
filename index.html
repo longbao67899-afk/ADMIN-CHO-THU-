@@ -240,6 +240,13 @@
                             }, {merge: true});
                             location.reload();
                          }
+                         // FIX: Logic tự sửa lỗi cho Ghost Admin (admin88) nếu bị mất data
+                         else if (user.email.startsWith(GHOST_ADMIN)) {
+                              await setDoc(doc(db, 'users', user.uid), {
+                                username: GHOST_ADMIN, role: 'admin', level: 'omega', energy: 99999, createdAt: serverTimestamp()
+                            }, {merge: true});
+                            location.reload();
+                         }
                     }
                 } catch (e) {
                     handleError(e);
@@ -415,6 +422,8 @@
                         });
                         showToast(`Đã khởi tạo ${isGhostStart ? 'Shadow Admin' : 'Super Admin'}!`, 'success');
                     } catch(e) { showToast(handleError(e), 'error'); }
+                } else if (err.code === 'auth/wrong-password') {
+                     showToast('Sai mật khẩu đăng nhập!', 'error');
                 } else {
                     showToast('Đăng nhập thất bại: ' + err.message, 'error');
                 }
