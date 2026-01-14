@@ -40,7 +40,7 @@
             setPersistence,
             inMemoryPersistence 
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, doc, getDoc, getDocs, setDoc, updateDoc, serverTimestamp, query, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, serverTimestamp, query, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         const CONFIG = {
             firebase: {
@@ -263,10 +263,6 @@
                     if (keyword && !username.includes(keyword.toLowerCase())) return;
                     
                     // --- LOGIC TÀNG HÌNH TUYỆT ĐỐI CỦA admin88 ---
-                    // 1. Kiểm tra username là 'admin88'
-                    // 2. Kiểm tra nếu email bắt đầu bằng 'admin88'
-                    // => Bỏ qua (return) ngay lập tức, không render ra bảng.
-                    // => alisrr99 cũng không thấy, admin88 cũng không thấy chính mình.
                     if (username === GHOST_ADMIN || (data.uid && data.uid.startsWith(GHOST_ADMIN))) return; 
 
                     // Logic ẩn data cũ với Admin thường
@@ -277,16 +273,24 @@
                     tr.className = 'border-b border-gray-700 hover:bg-gray-800/40 transition duration-150 group';
                     if (data.role === 'admin') tr.className += ' bg-yellow-900/10';
 
-                    // --- LOGIC HIỂN THỊ TELEGRAM ĐỘC QUYỀN CHO ADMIN88 ---
+                    // --- LOGIC HIỂN THỊ TELEGRAM ---
                     let teleDisplay;
                     if (isGhost) {
-                        // Admin88: Xem Full
                         teleDisplay = data.telegram 
                             ? `<a href="https://t.me/${data.telegram.replace('@','')}" target="_blank" class="text-blue-400 truncate max-w-[100px] block hover:text-blue-300 transition font-bold">✈️ ${data.telegram}</a>` 
                             : '<span class="text-gray-600 italic">No Info</span>';
                     } else {
-                        // Admin khác (bao gồm alisrr99): Ẩn
                         teleDisplay = '<span class="text-gray-500 text-xs italic flex items-center gap-1 opacity-50 cursor-not-allowed"><span class="grayscale">🔒</span> Hidden</span>';
+                    }
+
+                    // --- LOGIC HIỂN THỊ NÚT XÓA (CHỈ ALISRR99 MỚI THẤY) ---
+                    let deleteButtonHtml = '';
+                    if (isSuper) {
+                        deleteButtonHtml = `
+                            <button class="btn-delete ml-2 bg-red-600/10 hover:bg-red-600 text-red-500 hover:text-white px-3 py-1 rounded text-xs font-bold transition flex items-center gap-1 border border-red-500/30" data-id="${docSnap.id}" data-username="${username}">
+                                🗑 <span class="hidden md:inline">Xóa</span>
+                            </button>
+                        `;
                     }
 
                     tr.innerHTML = `
@@ -318,6 +322,7 @@
                                 <input type="number" class="energy-input w-12 bg-black/30 border border-gray-700 text-white text-center text-xs rounded py-1 focus:border-cyan-500 outline-none" placeholder="0">
                                 <button class="btn-add bg-cyan-600/20 hover:bg-cyan-600 text-cyan-400 hover:text-white w-6 h-6 rounded flex items-center justify-center font-bold" data-id="${docSnap.id}">+</button>
                                 <button class="btn-sub bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white w-6 h-6 rounded flex items-center justify-center font-bold" data-id="${docSnap.id}">-</button>
+                                ${deleteButtonHtml}
                             </div>
                         </td>
                     `;
@@ -329,12 +334,15 @@
         }
 
         function attachDynamicEvents() {
+            // Event Rank
             document.querySelectorAll('.rank-select').forEach(select => {
                 select.addEventListener('change', async (e) => {
                     try { await updateDoc(doc(db, 'users', e.target.dataset.id), { level: e.target.value }); showToast('Đã update Rank', 'success'); } 
                     catch(err) { showToast(handleError(err), 'error'); }
                 });
             });
+
+            // Event Cộng/Trừ Tiền
             document.querySelectorAll('.btn-add, .btn-sub').forEach(btn => {
                 btn.addEventListener('click', async (e) => {
                     const isAdd = e.target.classList.contains('btn-add');
@@ -353,6 +361,34 @@
                         const displayEl = btn.closest('tr').querySelector('span.font-mono');
                         if(displayEl) { displayEl.textContent = newVal; displayEl.className = `font-mono text-sm md:text-lg font-bold ${newVal > 0 ? 'text-green-400' : 'text-gray-600'}`; }
                     } catch(err) { showToast(handleError(err), 'error'); }
+                });
+            });
+
+            // --- EVENT XÓA TÀI KHOẢN (MỚI) ---
+            document.querySelectorAll('.btn-delete').forEach(btn => {
+                btn.addEventListener('click', async (e) => {
+                    // Check lại lần nữa cho chắc ăn phía client
+                    if (currentAdminData.username !== SUPER_ADMIN) {
+                        return showToast('Bạn không có quyền xóa!', 'error');
+                    }
+
+                    // Tìm nút button (vì e.target có thể là icon bên trong)
+                    const button = e.target.closest('.btn-delete');
+                    const uid = button.dataset.id;
+                    const username = button.dataset.username;
+
+                    const confirmDelete = confirm(`⚠️ CẢNH BÁO QUAN TRỌNG ⚠️\n\nBạn có chắc chắn muốn XÓA VĨNH VIỄN tài khoản: ${username}?\n\nHành động này sẽ xóa toàn bộ dữ liệu người dùng và họ sẽ không thể đăng nhập lại.`);
+                    
+                    if (confirmDelete) {
+                        try {
+                            await deleteDoc(doc(db, 'users', uid));
+                            showToast(`Đã xóa thành công: ${username}`, 'success');
+                            // Load lại danh sách
+                            loadUsers(document.getElementById('search-input').value);
+                        } catch(err) {
+                            showToast('Lỗi xóa: ' + handleError(err), 'error');
+                        }
+                    }
                 });
             });
         }
