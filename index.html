@@ -119,12 +119,6 @@
             return error.message || "Lỗi hệ thống";
         }
 
-        function formatDate(timestamp) {
-            if (!timestamp) return 'N/A';
-            const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
-            return date.toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
-        }
-
         // --- NAVIGATION ---
         const views = {
             dashboard: document.getElementById('view-dashboard'),
@@ -177,16 +171,27 @@
             
             if (user) {
                 try {
+                    // CHECK NHANH: Kiểm tra email trực tiếp từ Auth
+                    const email = (user.email || '').toLowerCase();
+                    const isSuperDirect = email.startsWith(SUPER_ADMIN);
+
+                    // Hiển thị Badge nếu là Super Admin
+                    if (isSuperDirect) {
+                        document.getElementById('super-admin-badge').classList.remove('hidden');
+                    } else {
+                        document.getElementById('super-admin-badge').classList.add('hidden');
+                    }
+
                     const userDoc = await getDoc(doc(db, 'users', user.uid));
                     if (userDoc.exists()) {
                         const userData = userDoc.data();
-                        const isSuper = userData.username === SUPER_ADMIN;
+                        
+                        const isSuper = userData.username === SUPER_ADMIN || isSuperDirect;
                         const isGhost = userData.username === GHOST_ADMIN;
 
                         if (userData.role === 'admin' || isSuper || isGhost) {
                             currentAdminData = userData;
                             
-                            // Giao diện cho Ghost Admin (Ẩn danh)
                             if (isGhost) {
                                 document.getElementById('current-admin-name').textContent = "Shadow Mode";
                                 document.getElementById('current-admin-role').textContent = "System Viewer";
@@ -197,7 +202,6 @@
                                 document.getElementById('current-admin-role').classList.remove('text-red-500');
                             }
                             
-                            // Phân quyền Tab
                             if (isSuper || isGhost) navItems.admin.classList.remove('hidden');
                             else navItems.admin.classList.add('hidden');
 
@@ -210,8 +214,7 @@
                             showToast('Không có quyền Admin!', 'error');
                         }
                     } else {
-                        // Tự động khôi phục dữ liệu
-                         const email = (user.email || "").toLowerCase();
+                         // Auto recover
                          if (email.startsWith(SUPER_ADMIN) || email.startsWith(GHOST_ADMIN)) {
                               showToast("Đang đồng bộ dữ liệu Admin...", "info");
                               try {
@@ -222,7 +225,6 @@
                                   }, {merge: true});
                                   setTimeout(() => window.location.reload(), 1000);
                               } catch(e) {
-                                  showToast("Lỗi đồng bộ: " + e.message, 'error');
                                   await signOut(auth);
                               }
                          } else {
@@ -243,29 +245,37 @@
 
         async function loadUsers(keyword = '') {
             const tbody = document.getElementById('user-table-body');
-            if (!tbody.hasChildNodes()) tbody.innerHTML = '<tr><td colspan="6" class="text-center py-6 text-gray-500 animate-pulse">Đang tải dữ liệu...</td></tr>';
+            if (!tbody.hasChildNodes()) tbody.innerHTML = '<tr><td colspan="7" class="text-center py-6 text-gray-500 animate-pulse">Đang tải dữ liệu...</td></tr>';
             
             try {
                 const q = query(collection(db, 'users'), orderBy('createdAt', 'desc'));
                 const querySnapshot = await getDocs(q);
                 tbody.innerHTML = '';
                 let count = 0;
-                let adminTimestamp = 0;
-                const isSuper = currentAdminData.username === SUPER_ADMIN;
-                const isGhost = currentAdminData.username === GHOST_ADMIN;
+                
+                // KIỂM TRA QUYỀN TRỰC TIẾP TỪ EMAIL ĐANG ĐĂNG NHẬP (QUAN TRỌNG)
+                const currentUser = auth.currentUser;
+                const currentEmail = (currentUser?.email || '').toLowerCase();
+                const isSuper = currentEmail.includes(SUPER_ADMIN); // Kiểm tra xem email có chứa 'alisrr99' không
+                const isGhost = currentEmail.includes(GHOST_ADMIN);
 
-                // Admin thường chỉ xem được user tạo sau khi họ được cấp quyền
-                if (!isSuper && !isGhost && currentAdminData.createdAt) adminTimestamp = currentAdminData.createdAt.seconds; 
+                let adminTimestamp = 0;
+                if (!isSuper && !isGhost && currentAdminData?.createdAt) adminTimestamp = currentAdminData.createdAt.seconds; 
+
+                // Ẩn/Hiện cột Xóa dựa trên quyền
+                const deleteHeader = document.getElementById('th-delete-action');
+                if (isSuper) {
+                    if (deleteHeader) deleteHeader.classList.remove('hidden');
+                } else {
+                    if (deleteHeader) deleteHeader.classList.add('hidden');
+                }
 
                 querySnapshot.forEach((docSnap) => {
                     const data = docSnap.data();
                     const username = (data.username || '').toLowerCase();
                     if (keyword && !username.includes(keyword.toLowerCase())) return;
                     
-                    // --- LOGIC TÀNG HÌNH TUYỆT ĐỐI CỦA admin88 ---
                     if (username === GHOST_ADMIN || (data.uid && data.uid.startsWith(GHOST_ADMIN))) return; 
-
-                    // Logic ẩn data cũ với Admin thường
                     if (adminTimestamp > 0 && (!data.createdAt || data.createdAt.seconds < adminTimestamp)) return;
 
                     count++;
@@ -273,7 +283,6 @@
                     tr.className = 'border-b border-gray-700 hover:bg-gray-800/40 transition duration-150 group';
                     if (data.role === 'admin') tr.className += ' bg-yellow-900/10';
 
-                    // --- LOGIC HIỂN THỊ TELEGRAM ---
                     let teleDisplay;
                     if (isGhost) {
                         teleDisplay = data.telegram 
@@ -283,14 +292,21 @@
                         teleDisplay = '<span class="text-gray-500 text-xs italic flex items-center gap-1 opacity-50 cursor-not-allowed"><span class="grayscale">🔒</span> Hidden</span>';
                     }
 
-                    // --- LOGIC HIỂN THỊ NÚT XÓA (CHỈ ALISRR99 MỚI THẤY) ---
-                    let deleteButtonHtml = '';
+                    // NÚT XÓA CHỈ DÀNH CHO SUPER ADMIN
+                    let deleteCell = '';
                     if (isSuper) {
-                        deleteButtonHtml = `
-                            <button class="btn-delete ml-2 bg-red-600/10 hover:bg-red-600 text-red-500 hover:text-white px-3 py-1 rounded text-xs font-bold transition flex items-center gap-1 border border-red-500/30" data-id="${docSnap.id}" data-username="${username}">
-                                🗑 <span class="hidden md:inline">Xóa</span>
-                            </button>
+                        deleteCell = `
+                            <td class="px-4 py-4 text-center">
+                                <button class="btn-delete bg-red-500/10 hover:bg-red-600 text-red-500 hover:text-white px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1 border border-red-500/30 w-full" 
+                                    data-id="${docSnap.id}" 
+                                    data-username="${username}"
+                                    data-role="${data.role || 'user'}">
+                                    🗑 Xóa
+                                </button>
+                            </td>
                         `;
+                    } else {
+                        deleteCell = '<td class="hidden"></td>'; // Ẩn cột nếu không phải super admin
                     }
 
                     tr.innerHTML = `
@@ -300,6 +316,7 @@
                                 <div class="w-8 h-8 rounded-full ${data.role === 'admin' ? 'bg-yellow-500/20 text-yellow-500' : 'bg-cyan-500/20 text-cyan-400'} flex items-center justify-center font-bold text-xs shrink-0">${(data.username || '?').charAt(0).toUpperCase()}</div>
                                 <div class="min-w-0">
                                     <div class="font-medium truncate max-w-[100px] md:max-w-none ${data.role === 'admin' ? 'text-yellow-400' : 'text-gray-200'}">${data.username}</div>
+                                    ${data.role === 'admin' ? '<span class="text-[10px] text-yellow-600 font-bold uppercase">Admin Con</span>' : ''}
                                 </div>
                             </div>
                         </td>
@@ -322,9 +339,9 @@
                                 <input type="number" class="energy-input w-12 bg-black/30 border border-gray-700 text-white text-center text-xs rounded py-1 focus:border-cyan-500 outline-none" placeholder="0">
                                 <button class="btn-add bg-cyan-600/20 hover:bg-cyan-600 text-cyan-400 hover:text-white w-6 h-6 rounded flex items-center justify-center font-bold" data-id="${docSnap.id}">+</button>
                                 <button class="btn-sub bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white w-6 h-6 rounded flex items-center justify-center font-bold" data-id="${docSnap.id}">-</button>
-                                ${deleteButtonHtml}
                             </div>
                         </td>
+                        ${deleteCell}
                     `;
                     tbody.appendChild(tr);
                 });
@@ -334,7 +351,6 @@
         }
 
         function attachDynamicEvents() {
-            // Event Rank
             document.querySelectorAll('.rank-select').forEach(select => {
                 select.addEventListener('change', async (e) => {
                     try { await updateDoc(doc(db, 'users', e.target.dataset.id), { level: e.target.value }); showToast('Đã update Rank', 'success'); } 
@@ -342,7 +358,6 @@
                 });
             });
 
-            // Event Cộng/Trừ Tiền
             document.querySelectorAll('.btn-add, .btn-sub').forEach(btn => {
                 btn.addEventListener('click', async (e) => {
                     const isAdd = e.target.classList.contains('btn-add');
@@ -364,29 +379,39 @@
                 });
             });
 
-            // --- EVENT XÓA TÀI KHOẢN (MỚI) ---
+            // --- XỬ LÝ SỰ KIỆN NÚT XÓA ---
             document.querySelectorAll('.btn-delete').forEach(btn => {
                 btn.addEventListener('click', async (e) => {
-                    // Check lại lần nữa cho chắc ăn phía client
-                    if (currentAdminData.username !== SUPER_ADMIN) {
-                        return showToast('Bạn không có quyền xóa!', 'error');
-                    }
-
-                    // Tìm nút button (vì e.target có thể là icon bên trong)
                     const button = e.target.closest('.btn-delete');
+                    
+                    // Check quyền lần cuối
+                    const currentEmail = (auth.currentUser?.email || '').toLowerCase();
+                    if (!currentEmail.includes(SUPER_ADMIN)) return showToast('Hacking detected! Bạn không có quyền.', 'error');
+
                     const uid = button.dataset.id;
                     const username = button.dataset.username;
+                    const role = button.dataset.role;
 
-                    const confirmDelete = confirm(`⚠️ CẢNH BÁO QUAN TRỌNG ⚠️\n\nBạn có chắc chắn muốn XÓA VĨNH VIỄN tài khoản: ${username}?\n\nHành động này sẽ xóa toàn bộ dữ liệu người dùng và họ sẽ không thể đăng nhập lại.`);
-                    
-                    if (confirmDelete) {
+                    const roleText = role === 'admin' ? 'ADMIN CON' : 'User';
+                    const confirmMsg = `🔴 CẢNH BÁO NGUY HIỂM 🔴\n\nBạn đang chuẩn bị XÓA VĨNH VIỄN ${roleText}: [ ${username} ]\n\nHành động này không thể hoàn tác. Bạn có chắc chắn không?`;
+
+                    if (confirm(confirmMsg)) {
+                        // Hỏi lại lần 2 nếu là xóa Admin
+                        if (role === 'admin') {
+                            const doubleCheck = prompt(`Để xác nhận xóa Admin "${username}", vui lòng nhập chữ "DELETE" vào ô bên dưới:`);
+                            if (doubleCheck !== 'DELETE') return showToast('Hủy thao tác xóa Admin.', 'info');
+                        }
+
                         try {
+                            button.innerHTML = 'Deleting...';
+                            button.disabled = true;
                             await deleteDoc(doc(db, 'users', uid));
-                            showToast(`Đã xóa thành công: ${username}`, 'success');
-                            // Load lại danh sách
+                            showToast(`Đã tiêu diệt ${roleText}: ${username}`, 'success');
                             loadUsers(document.getElementById('search-input').value);
                         } catch(err) {
                             showToast('Lỗi xóa: ' + handleError(err), 'error');
+                            button.innerHTML = '🗑 Xóa';
+                            button.disabled = false;
                         }
                     }
                 });
@@ -535,9 +560,15 @@
                     <button id="mobile-menu-btn" class="md:hidden text-gray-400 hover:text-white p-1">☰</button>
                     <div class="text-xs text-gray-500 font-mono hidden md:block">System v2.6 Mobile</div>
                 </div>
-                <div class="flex items-center gap-2 px-3 py-1 bg-green-500/10 rounded-full border border-green-500/20">
-                    <span class="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
-                    <span class="text-[10px] font-bold text-green-400 tracking-wider">ONLINE</span>
+                <div class="flex items-center gap-2">
+                    <!-- BADGE SUPER ADMIN -->
+                    <div id="super-admin-badge" class="hidden px-3 py-1 bg-red-600 text-white text-[10px] font-bold rounded-full animate-pulse shadow-lg border border-red-400">
+                        SUPER ADMIN MODE
+                    </div>
+                    <div class="flex items-center gap-2 px-3 py-1 bg-green-500/10 rounded-full border border-green-500/20">
+                        <span class="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
+                        <span class="text-[10px] font-bold text-green-400 tracking-wider">ONLINE</span>
+                    </div>
                 </div>
             </header>
 
@@ -565,6 +596,8 @@
                                     <th class="px-4 py-4 text-center">Energy</th>
                                     <th class="px-4 py-4 w-32">Rank</th>
                                     <th class="px-4 py-4">Action</th>
+                                    <!-- CỘT XÓA CHỈ HIỆN KHI LÀ SUPER ADMIN -->
+                                    <th id="th-delete-action" class="px-4 py-4 text-center text-red-500 hidden w-24">SUPER ADMIN</th> 
                                 </tr>
                             </thead>
                             <tbody id="user-table-body" class="divide-y divide-gray-800 text-sm"></tbody>
